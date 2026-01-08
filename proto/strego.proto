@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package strego.v1;
+
+option go_package = "github.com/erennakbas/strego/internal/proto;pb";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// Task represents a unit of work to be processed
+message Task {
+  string id = 1;
+  string type = 2;
+  bytes payload = 3;
+  TaskOptions options = 4;
+  TaskMetadata metadata = 5;
+}
+
+// TaskOptions configures how a task should be processed
+message TaskOptions {
+  string queue = 1;
+  int32 max_retry = 2;
+  google.protobuf.Duration timeout = 3;
+  google.protobuf.Timestamp process_at = 4;
+  int32 priority = 5;
+  string unique_key = 6;
+  google.protobuf.Duration unique_ttl = 7;
+  map<string, string> labels = 8;
+}
+
+// TaskState represents the current state of a task
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_PENDING = 1;
+  TASK_STATE_SCHEDULED = 2;
+  TASK_STATE_ACTIVE = 3;
+  TASK_STATE_COMPLETED = 4;
+  TASK_STATE_FAILED = 5;
+  TASK_STATE_RETRY = 6;
+  TASK_STATE_DEAD = 7;
+  TASK_STATE_CANCELLED = 8;
+}
+
+// TaskMetadata contains runtime information about a task
+message TaskMetadata {
+  TaskState state = 1;
+  google.protobuf.Timestamp created_at = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp completed_at = 4;
+  int32 retry_count = 5;
+  string last_error = 6;
+  string worker_id = 7;
+  string trace_id = 8;
+  string stream_msg_id = 9;
+}
+
+// TaskResult stores the outcome of task processing
+message TaskResult {
+  string task_id = 1;
+  bool success = 2;
+  bytes result = 3;
+  string error = 4;
+  google.protobuf.Duration duration = 5;
+  google.protobuf.Timestamp completed_at = 6;
+}
+
+// TaskInfo is returned after enqueuing a task
+message TaskInfo {
+  string id = 1;
+  string queue = 2;
+  TaskState state = 3;
+  google.protobuf.Timestamp process_at = 4;
+}
+
+// QueueInfo contains statistics about a queue
+message QueueInfo {
+  string name = 1;
+  int64 pending = 2;
+  int64 active = 3;
+  int64 scheduled = 4;
+  int64 retry = 5;
+  int64 dead = 6;
+  int64 completed = 7;
+  int64 processed = 8;
+  int64 failed = 9;
+}
+
+// WorkerInfo contains information about a worker
+message WorkerInfo {
+  string id = 1;
+  string hostname = 2;
+  int32 pid = 3;
+  repeated string queues = 4;
+  int32 concurrency = 5;
+  google.protobuf.Timestamp started_at = 6;
+  TaskState status = 7;
+}

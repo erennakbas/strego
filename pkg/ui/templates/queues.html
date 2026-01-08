@@ -1,0 +1,58 @@
+{{define "queues.html"}}
+<div class="space-y-6">
+    <h2 class="text-2xl font-bold">Queues</h2>
+
+    <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+        <table class="w-full">
+            <thead class="bg-gray-800/50">
+                <tr>
+                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">Queue</th>
+                    <th class="px-4 py-3 text-center text-sm font-medium text-gray-400">Pending</th>
+                    <th class="px-4 py-3 text-center text-sm font-medium text-gray-400">Active</th>
+                    <th class="px-4 py-3 text-center text-sm font-medium text-gray-400">Dead</th>
+                    <th class="px-4 py-3 text-center text-sm font-medium text-gray-400">Completed</th>
+                    <th class="px-4 py-3 text-right text-sm font-medium text-gray-400">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800">
+                {{range .Queues}}
+                <tr class="hover:bg-gray-800/50 transition-colors">
+                    <td class="px-4 py-3">
+                        <a href="/queues/{{.Name}}" class="font-medium hover:text-strego-400">📬 {{.Name}}</a>
+                    </td>
+                    <td class="px-4 py-3 text-center">
+                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-900/50 text-yellow-400">
+                            {{.Pending}}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-center">
+                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-cyan-900/50 text-cyan-400">
+                            {{.Active}}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-center">
+                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-900/50 text-red-400">
+                            {{.Dead}}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-center">
+                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-900/50 text-green-400">
+                            {{.Processed}}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-right">
+                        <a href="/queues/{{.Name}}" class="text-sm text-strego-400 hover:text-strego-300">View →</a>
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="6" class="px-4 py-8 text-center text-gray-500">
+                        No queues found
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}

@@ -1,0 +1,113 @@
+{{define "dashboard.html"}}
+<div class="space-y-6">
+    <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold">Dashboard</h2>
+        <div class="flex items-center gap-2 text-sm text-gray-500">
+            <span class="htmx-indicator">
+                <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </span>
+            <span>Auto-refresh: 5s</span>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div id="stats" hx-get="/partials/stats" hx-trigger="load, every 5s" hx-swap="innerHTML">
+        {{if .Stats}}
+            {{template "partial_stats.html" .Stats}}
+        {{else}}
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 animate-pulse">
+                    <div class="h-4 bg-gray-800 rounded w-20 mb-2"></div>
+                    <div class="h-8 bg-gray-800 rounded w-16"></div>
+                </div>
+                <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 animate-pulse">
+                    <div class="h-4 bg-gray-800 rounded w-20 mb-2"></div>
+                    <div class="h-8 bg-gray-800 rounded w-16"></div>
+                </div>
+                <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 animate-pulse">
+                    <div class="h-4 bg-gray-800 rounded w-20 mb-2"></div>
+                    <div class="h-8 bg-gray-800 rounded w-16"></div>
+                </div>
+                <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 animate-pulse">
+                    <div class="h-4 bg-gray-800 rounded w-20 mb-2"></div>
+                    <div class="h-8 bg-gray-800 rounded w-16"></div>
+                </div>
+            </div>
+        {{end}}
+    </div>
+
+    <!-- Queues Overview -->
+    <div class="bg-gray-900 rounded-xl border border-gray-800">
+        <div class="p-4 border-b border-gray-800 flex items-center justify-between">
+            <h3 class="font-semibold">Queues</h3>
+            <a href="/queues" class="text-sm text-strego-400 hover:text-strego-300">View all →</a>
+        </div>
+        <div id="queues" hx-get="/partials/queues" hx-trigger="load, every 5s" hx-swap="innerHTML">
+            {{if .Queues}}
+                {{template "partial_queues.html" .Queues}}
+            {{else}}
+                <div class="p-4 text-gray-500 text-sm">Loading queues...</div>
+            {{end}}
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "partial_stats.html"}}
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+        <div class="text-sm text-gray-500 mb-1">Pending</div>
+        <div class="text-2xl font-bold text-yellow-400">{{.PendingTasks}}</div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+        <div class="text-sm text-gray-500 mb-1">Active</div>
+        <div class="text-2xl font-bold text-cyan-400">{{.ActiveTasks}}</div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+        <div class="text-sm text-gray-500 mb-1">Completed</div>
+        <div class="text-2xl font-bold text-green-400">{{.CompletedTasks}}</div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+        <div class="text-sm text-gray-500 mb-1">Dead</div>
+        <div class="text-2xl font-bold text-red-400">{{.DeadTasks}}</div>
+    </div>
+</div>
+{{end}}
+
+{{define "partial_queues.html"}}
+<div class="divide-y divide-gray-800">
+    {{range .}}
+    <div class="p-4 flex items-center justify-between hover:bg-gray-800/50 transition-colors">
+        <div class="flex items-center gap-3">
+            <span class="text-lg">📬</span>
+            <div>
+                <a href="/queues/{{.Name}}" class="font-medium hover:text-strego-400">{{.Name}}</a>
+            </div>
+        </div>
+        <div class="flex items-center gap-6 text-sm">
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+                <span class="text-gray-400">{{.Pending}} pending</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-cyan-500"></span>
+                <span class="text-gray-400">{{.Active}} active</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-red-500"></span>
+                <span class="text-gray-400">{{.Dead}} dead</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                <span class="text-gray-400">{{.Processed}} completed</span>
+            </div>
+        </div>
+    </div>
+    {{else}}
+    <div class="p-4 text-gray-500 text-sm">No queues found</div>
+    {{end}}
+</div>
+{{end}}

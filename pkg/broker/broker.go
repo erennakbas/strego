@@ -1,0 +1,103 @@
+// Package broker defines the interface for task queue backends.
+package broker
+
+import (
+	"context"
+	"time"
+
+	pb "github.com/erennakbas/strego/internal/proto"
+)
+
+// Broker defines the interface for task queue operations.
+// The primary implementation uses Redis Streams.
+type Broker interface {
+	// Publish adds a task to the specified queue
+	Publish(ctx context.Context, queue string, task *pb.Task) error
+
+	// Subscribe starts consuming tasks from the specified queues
+	// The handler is called for each task received
+	Subscribe(ctx context.Context, queues []string, handler TaskHandler) error
+
+	// Ack acknowledges a task as successfully processed
+	Ack(ctx context.Context, queue string, msgID string) error
+
+	// Schedule adds a task to be processed at a specific time
+	Schedule(ctx context.Context, task *pb.Task, processAt time.Time) error
+
+	// GetScheduled retrieves tasks that are ready to be processed
+	GetScheduled(ctx context.Context, until time.Time, limit int64) ([]*pb.Task, error)
+
+	// MoveToQueue moves a scheduled task to its target queue
+	MoveToQueue(ctx context.Context, task *pb.Task) error
+
+	// Retry schedules a task for retry with backoff
+	Retry(ctx context.Context, queue string, task *pb.Task, delay time.Duration) error
+
+	// GetRetry retrieves tasks that are ready to be retried
+	GetRetry(ctx context.Context, until time.Time, limit int64) ([]*pb.Task, error)
+
+	// MoveToDLQ moves a failed task to the dead letter queue
+	MoveToDLQ(ctx context.Context, queue string, task *pb.Task, err error) error
+
+	// GetDLQ retrieves tasks from the dead letter queue
+	GetDLQ(ctx context.Context, queue string, limit int64) ([]*pb.Task, error)
+
+	// RetryFromDLQ moves a task from DLQ back to the main queue
+	RetryFromDLQ(ctx context.Context, queue string, taskID string) error
+
+	// SetProcessed marks a task as processed for idempotency
+	SetProcessed(ctx context.Context, taskID string, ttl time.Duration) (bool, error)
+
+	// SetUnique sets a unique key for deduplication
+	SetUnique(ctx context.Context, uniqueKey string, taskID string, ttl time.Duration) (bool, error)
+
+	// GetQueueInfo returns statistics for a queue
+	GetQueueInfo(ctx context.Context, queue string) (*pb.QueueInfo, error)
+
+	// GetQueues returns all known queue names
+	GetQueues(ctx context.Context) ([]string, error)
+
+	// PurgeQueue removes all tasks from a queue
+	PurgeQueue(ctx context.Context, queue string) error
+
+	// PurgeDLQ removes all tasks from the dead letter queue
+	PurgeDLQ(ctx context.Context, queue string) error
+
+	// Ping checks if the broker is healthy
+	Ping(ctx context.Context) error
+
+	// Close closes the broker connection
+	Close() error
+}
+
+// TaskHandler is called when a task is received from the queue
+type TaskHandler func(ctx context.Context, task *pb.Task) error
+
+// ConsumerConfig configures the consumer behavior
+type ConsumerConfig struct {
+	// Group is the consumer group name
+	Group string
+
+	// Consumer is the unique consumer name within the group
+	Consumer string
+
+	// BatchSize is the number of tasks to fetch at once
+	BatchSize int64
+
+	// BlockDuration is how long to wait for new tasks
+	BlockDuration time.Duration
+
+	// ClaimStaleAfter is the duration after which stale tasks are claimed
+	ClaimStaleAfter time.Duration
+}
+
+// DefaultConsumerConfig returns a default consumer configuration
+func DefaultConsumerConfig() ConsumerConfig {
+	return ConsumerConfig{
+		Group:           "strego-workers",
+		Consumer:        "",
+		BatchSize:       10,
+		BlockDuration:   5 * time.Second,
+		ClaimStaleAfter: 5 * time.Minute,
+	}
+}

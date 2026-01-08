@@ -1,0 +1,145 @@
+{{define "task_detail.html"}}
+<div class="space-y-6">
+    <div class="flex items-center gap-4">
+        <a href="/tasks" class="text-gray-500 hover:text-gray-300">← Tasks</a>
+        <h2 class="text-2xl font-bold">Task Detail</h2>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Main Info -->
+        <div class="lg:col-span-2 space-y-6">
+            <!-- Basic Info -->
+            <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                <div class="p-4 border-b border-gray-800">
+                    <h3 class="font-semibold">Task Information</h3>
+                </div>
+                <div class="p-4 space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="text-sm text-gray-500">ID</label>
+                            <div class="font-mono text-sm mt-1 break-all">{{.Task.Id}}</div>
+                        </div>
+                        <div>
+                            <label class="text-sm text-gray-500">Type</label>
+                            <div class="mt-1">{{.Task.Type}}</div>
+                        </div>
+                        <div>
+                            <label class="text-sm text-gray-500">Queue</label>
+                            <div class="mt-1">{{.Task.Options.Queue}}</div>
+                        </div>
+                        <div>
+                            <label class="text-sm text-gray-500">State</label>
+                            <div class="mt-1">
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium {{stateClass (printf "%v" .Task.Metadata.State)}}">
+                                    {{stateIcon (printf "%v" .Task.Metadata.State)}} {{.Task.Metadata.State}}
+                                </span>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-sm text-gray-500">Retries</label>
+                            <div class="mt-1">{{.Task.Metadata.RetryCount}} / {{.Task.Options.MaxRetry}}</div>
+                        </div>
+                        <div>
+                            <label class="text-sm text-gray-500">Priority</label>
+                            <div class="mt-1">{{.Task.Options.Priority}}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Payload -->
+            <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                <div class="p-4 border-b border-gray-800">
+                    <h3 class="font-semibold">Payload</h3>
+                </div>
+                <div class="p-4">
+                    <pre class="bg-gray-950 rounded-lg p-4 text-sm font-mono overflow-x-auto text-gray-300">{{printf "%s" .Task.Payload}}</pre>
+                </div>
+            </div>
+
+            <!-- Error -->
+            {{if .Task.Metadata.LastError}}
+            <div class="bg-red-900/20 border border-red-800 rounded-xl overflow-hidden">
+                <div class="p-4 border-b border-red-800 bg-red-900/30">
+                    <h3 class="font-semibold text-red-400">❌ Last Error</h3>
+                </div>
+                <div class="p-4">
+                    <pre class="text-sm font-mono text-red-300 whitespace-pre-wrap">{{.Task.Metadata.LastError}}</pre>
+                </div>
+            </div>
+            {{end}}
+        </div>
+
+        <!-- Sidebar -->
+        <div class="space-y-6">
+            <!-- Timeline -->
+            <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                <div class="p-4 border-b border-gray-800">
+                    <h3 class="font-semibold">Timeline</h3>
+                </div>
+                <div class="p-4 space-y-4">
+                    <div class="flex items-start gap-3">
+                        <div class="w-2 h-2 mt-2 rounded-full bg-blue-500"></div>
+                        <div>
+                            <div class="text-sm font-medium">Created</div>
+                            <div class="text-xs text-gray-500">
+                                {{if .Task.Metadata.CreatedAt}}{{formatTime .Task.Metadata.CreatedAt.AsTime}}{{else}}-{{end}}
+                            </div>
+                        </div>
+                    </div>
+                    {{if .Task.Metadata.StartedAt}}
+                    <div class="flex items-start gap-3">
+                        <div class="w-2 h-2 mt-2 rounded-full bg-cyan-500"></div>
+                        <div>
+                            <div class="text-sm font-medium">Started</div>
+                            <div class="text-xs text-gray-500">{{formatTime .Task.Metadata.StartedAt.AsTime}}</div>
+                        </div>
+                    </div>
+                    {{end}}
+                    {{if .Task.Metadata.CompletedAt}}
+                    <div class="flex items-start gap-3">
+                        <div class="w-2 h-2 mt-2 rounded-full bg-green-500"></div>
+                        <div>
+                            <div class="text-sm font-medium">Completed</div>
+                            <div class="text-xs text-gray-500">{{formatTime .Task.Metadata.CompletedAt.AsTime}}</div>
+                        </div>
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+
+            <!-- Worker Info -->
+            {{if .Task.Metadata.WorkerId}}
+            <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                <div class="p-4 border-b border-gray-800">
+                    <h3 class="font-semibold">Worker</h3>
+                </div>
+                <div class="p-4">
+                    <div class="text-sm font-mono text-gray-400">{{.Task.Metadata.WorkerId}}</div>
+                </div>
+            </div>
+            {{end}}
+
+            <!-- Actions -->
+            <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                <div class="p-4 border-b border-gray-800">
+                    <h3 class="font-semibold">Actions</h3>
+                </div>
+                <div class="p-4 space-y-2">
+                    <button hx-post="/tasks/{{.Task.Id}}/retry?queue={{.Task.Options.Queue}}"
+                        hx-swap="outerHTML"
+                        class="w-full bg-strego-600 hover:bg-strego-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                        🔄 Retry Task
+                    </button>
+                    <button hx-post="/tasks/{{.Task.Id}}/delete"
+                        hx-confirm="Are you sure you want to delete this task?"
+                        hx-swap="outerHTML"
+                        class="w-full bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                        🗑️ Delete Task
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}

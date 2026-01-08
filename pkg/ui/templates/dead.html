@@ -1,0 +1,71 @@
+{{define "dead.html"}}
+<div class="space-y-6">
+    <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold">💀 Dead Letter Queue</h2>
+    </div>
+
+    {{range $queue, $tasks := .DeadTasks}}
+    <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+        <div class="p-4 border-b border-gray-800 flex items-center justify-between bg-red-900/10">
+            <div class="flex items-center gap-3">
+                <span class="text-lg">📬</span>
+                <h3 class="font-semibold">{{$queue}}</h3>
+                <span class="px-2 py-1 rounded-full text-xs bg-red-900/50 text-red-400">{{len $tasks}} dead</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button hx-post="/dead/{{$queue}}/retry-all"
+                    hx-swap="outerHTML"
+                    class="bg-strego-600 hover:bg-strego-500 text-white px-3 py-1 rounded-lg text-sm font-medium transition-colors">
+                    🔄 Retry All
+                </button>
+                <button hx-post="/dead/{{$queue}}/purge"
+                    hx-confirm="Are you sure you want to purge all dead tasks from this queue?"
+                    hx-swap="outerHTML"
+                    class="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg text-sm font-medium transition-colors">
+                    🗑️ Purge
+                </button>
+            </div>
+        </div>
+        <table class="w-full">
+            <thead class="bg-gray-800/50">
+                <tr>
+                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">ID</th>
+                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">Type</th>
+                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">Error</th>
+                    <th class="px-4 py-3 text-center text-sm font-medium text-gray-400">Retries</th>
+                    <th class="px-4 py-3 text-right text-sm font-medium text-gray-400">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800">
+                {{range $tasks}}
+                <tr class="hover:bg-gray-800/50 transition-colors" id="task-row-{{.Id}}">
+                    <td class="px-4 py-3">
+                        <span class="font-mono text-sm">{{truncate .Id 8}}</span>
+                    </td>
+                    <td class="px-4 py-3 text-gray-300">{{.Type}}</td>
+                    <td class="px-4 py-3">
+                        <span class="text-sm text-red-400">{{truncate .Metadata.LastError 50}}</span>
+                    </td>
+                    <td class="px-4 py-3 text-center text-gray-400">{{.Metadata.RetryCount}}</td>
+                    <td class="px-4 py-3 text-right">
+                        <button hx-post="/tasks/{{.Id}}/retry?queue={{$queue}}"
+                            hx-target="#task-row-{{.Id}}"
+                            hx-swap="outerHTML"
+                            class="text-sm text-strego-400 hover:text-strego-300">
+                            Retry
+                        </button>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{else}}
+    <div class="bg-gray-900 rounded-xl border border-gray-800 p-8 text-center">
+        <div class="text-4xl mb-4">🎉</div>
+        <div class="text-lg font-medium">No dead tasks!</div>
+        <div class="text-sm text-gray-500 mt-1">All tasks are processing successfully</div>
+    </div>
+    {{end}}
+</div>
+{{end}}

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} | strego</title>
+    <script src="https://unpkg.com/htmx.org@2.0.0"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['JetBrains Mono', 'Menlo', 'monospace'],
+                    },
+                    colors: {
+                        'strego': {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            200: '#bbf7d0',
+                            300: '#86efac',
+                            400: '#4ade80',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            800: '#166534',
+                            900: '#14532d',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        [x-cloak] { display: none !important; }
+        .htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+        .htmx-request .htmx-indicator { opacity: 1; }
+        .htmx-request.htmx-indicator { opacity: 1; }
+    </style>
+</head>
+<body class="h-full bg-gray-950 text-gray-100" x-data="{ sidebarOpen: true }">
+    <div class="flex h-full">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-gray-900 border-r border-gray-800 flex flex-col" x-show="sidebarOpen">
+            <div class="p-4 border-b border-gray-800">
+                <h1 class="text-xl font-bold text-strego-400">🚀 strego</h1>
+                <p class="text-xs text-gray-500 mt-1">Task Queue Dashboard</p>
+            </div>
+            
+            <nav class="flex-1 p-4 space-y-2">
+                <a href="/" class="flex items-center gap-3 px-3 py-2 rounded-lg {{if eq .Page "dashboard"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors">
+                    <span>📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="/queues" class="flex items-center gap-3 px-3 py-2 rounded-lg {{if eq .Page "queues"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors">
+                    <span>📬</span>
+                    <span>Queues</span>
+                </a>
+                <a href="/tasks" class="flex items-center gap-3 px-3 py-2 rounded-lg {{if eq .Page "tasks"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors">
+                    <span>📋</span>
+                    <span>Tasks</span>
+                </a>
+                <a href="/dead" class="flex items-center gap-3 px-3 py-2 rounded-lg {{if eq .Page "dead"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors">
+                    <span>💀</span>
+                    <span>Dead Letter Queue</span>
+                </a>
+            </nav>
+            
+            <div class="p-4 border-t border-gray-800 text-xs text-gray-600">
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-strego-500 animate-pulse"></span>
+                    <span>Connected</span>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main content -->
+        <main class="flex-1 overflow-auto">
+            <div class="p-6">
+                {{if eq .Page "dashboard"}}
+                    {{template "dashboard.html" .}}
+                {{else if eq .Page "queues"}}
+                    {{template "queues.html" .}}
+                {{else if eq .Page "queue-detail"}}
+                    {{template "queue_detail.html" .}}
+                {{else if eq .Page "tasks"}}
+                    {{template "tasks.html" .}}
+                {{else if eq .Page "task-detail"}}
+                    {{template "task_detail.html" .}}
+                {{else if eq .Page "dead"}}
+                    {{template "dead.html" .}}
+                {{end}}
+            </div>
+        </main>
+    </div>
+</body>
+</html>

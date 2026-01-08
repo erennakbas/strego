@@ -1,0 +1,65 @@
+{{define "queue_detail.html"}}
+<div class="space-y-6">
+    <div class="flex items-center gap-4">
+        <a href="/queues" class="text-gray-500 hover:text-gray-300">← Queues</a>
+        <h2 class="text-2xl font-bold">📬 {{.Queue.Name}}</h2>
+    </div>
+
+    <!-- Queue Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <div class="text-sm text-gray-500 mb-1">Pending</div>
+            <div class="text-2xl font-bold text-yellow-400">{{.Queue.Pending}}</div>
+        </div>
+        <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <div class="text-sm text-gray-500 mb-1">Active</div>
+            <div class="text-2xl font-bold text-cyan-400">{{.Queue.Active}}</div>
+        </div>
+        <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <div class="text-sm text-gray-500 mb-1">Completed</div>
+            <div class="text-2xl font-bold text-green-400">{{.Queue.Processed}}</div>
+        </div>
+        <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <div class="text-sm text-gray-500 mb-1">Dead</div>
+            <div class="text-2xl font-bold text-red-400">{{.Queue.Dead}}</div>
+        </div>
+    </div>
+
+    <!-- Tasks -->
+    {{if .Tasks}}
+    <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+        <div class="p-4 border-b border-gray-800">
+            <h3 class="font-semibold">Recent Tasks</h3>
+        </div>
+        <table class="w-full">
+            <thead class="bg-gray-800/50">
+                <tr>
+                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">ID</th>
+                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">Type</th>
+                    <th class="px-4 py-3 text-center text-sm font-medium text-gray-400">State</th>
+                    <th class="px-4 py-3 text-right text-sm font-medium text-gray-400">Created</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800">
+                {{range .Tasks}}
+                <tr class="hover:bg-gray-800/50 transition-colors">
+                    <td class="px-4 py-3">
+                        <a href="/tasks/{{.Id}}" class="font-mono text-sm hover:text-strego-400">{{truncate .Id 8}}</a>
+                    </td>
+                    <td class="px-4 py-3 text-gray-300">{{.Type}}</td>
+                    <td class="px-4 py-3 text-center">
+                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium {{stateClass (printf "%v" .Metadata.State)}}">
+                            {{stateIcon (printf "%v" .Metadata.State)}} {{.Metadata.State}}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-right text-sm text-gray-500">
+                        {{if .Metadata.CreatedAt}}{{formatTime .Metadata.CreatedAt.AsTime}}{{else}}-{{end}}
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+</div>
+{{end}}
