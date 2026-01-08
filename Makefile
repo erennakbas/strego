@@ -1,10 +1,4 @@
-.PHONY: proto build test clean
-
-# Generate protobuf code
-proto:
-	@mkdir -p internal/proto
-	protoc --go_out=. --go_opt=paths=source_relative \
-		proto/strego.proto
+.PHONY: build test clean
 
 # Build the project
 build:
@@ -21,7 +15,6 @@ test-coverage:
 
 # Clean generated files
 clean:
-	rm -rf internal/proto/*.pb.go
 	rm -f coverage.out coverage.html
 
 # Install dependencies

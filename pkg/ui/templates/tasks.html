@@ -84,8 +84,8 @@
                 {{range .Tasks}}
                 <tr class="hover:bg-gray-800/30 transition-colors group">
                     <td class="px-5 py-4">
-                        <a href="/tasks/{{.Id}}" class="font-mono text-sm text-emerald-400 hover:text-emerald-300 transition-colors">
-                            {{truncate .Id 8}}
+                        <a href="/tasks/{{.ID}}" class="font-mono text-sm text-emerald-400 hover:text-emerald-300 transition-colors">
+                            {{truncate .ID 8}}
                         </a>
                     </td>
                     <td class="px-5 py-4">
@@ -95,43 +95,43 @@
                     </td>
                     <td class="px-5 py-4 text-gray-400 text-sm">{{.Options.Queue}}</td>
                     <td class="px-5 py-4 text-center">
-                        {{$stateStr := printf "%v" .Metadata.State}}
-                        {{if eq $stateStr "TASK_STATE_PENDING"}}
+                        {{$stateStr := printf "%s" .Metadata.State}}
+                        {{if eq $stateStr "pending"}}
                         <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 ring-1 ring-inset ring-amber-500/20">
                             <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
                             Pending
                         </span>
-                        {{else if eq $stateStr "TASK_STATE_SCHEDULED"}}
+                        {{else if eq $stateStr "scheduled"}}
                         <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 ring-1 ring-inset ring-blue-500/20">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                             Scheduled
                         </span>
-                        {{else if eq $stateStr "TASK_STATE_ACTIVE"}}
+                        {{else if eq $stateStr "active"}}
                         <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 ring-1 ring-inset ring-cyan-500/20">
                             <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
                             Active
                         </span>
-                        {{else if eq $stateStr "TASK_STATE_COMPLETED"}}
+                        {{else if eq $stateStr "completed"}}
                         <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 ring-1 ring-inset ring-emerald-500/20">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                             Completed
                         </span>
-                        {{else if eq $stateStr "TASK_STATE_FAILED"}}
+                        {{else if eq $stateStr "failed"}}
                         <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 ring-1 ring-inset ring-red-500/20">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                             Failed
                         </span>
-                        {{else if eq $stateStr "TASK_STATE_RETRY"}}
+                        {{else if eq $stateStr "retry"}}
                         <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-orange-500/10 text-orange-400 ring-1 ring-inset ring-orange-500/20">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                             Retry
                         </span>
-                        {{else if eq $stateStr "TASK_STATE_DEAD"}}
+                        {{else if eq $stateStr "dead"}}
                         <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 ring-1 ring-inset ring-rose-500/20">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
                             Dead
                         </span>
-                        {{else if eq $stateStr "TASK_STATE_CANCELLED"}}
+                        {{else if eq $stateStr "cancelled"}}
                         <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-500/10 text-gray-400 ring-1 ring-inset ring-gray-500/20">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
                             Cancelled
@@ -148,7 +148,7 @@
                         </span>
                     </td>
                     <td class="px-5 py-4 text-right text-sm text-gray-500">
-                        {{if .Metadata.CreatedAt}}{{formatTime .Metadata.CreatedAt.AsTime}}{{else}}—{{end}}
+                        {{if .Metadata.CreatedAt}}{{formatTime .Metadata.CreatedAt}}{{else}}—{{end}}
                     </td>
                 </tr>
                 {{else}}

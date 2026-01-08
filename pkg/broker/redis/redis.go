@@ -3,6 +3,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,10 +11,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"google.golang.org/protobuf/proto"
 
-	pb "github.com/erennakbas/strego/internal/proto"
 	"github.com/erennakbas/strego/pkg/broker"
+	"github.com/erennakbas/strego/pkg/types"
 )
 
 const (
@@ -77,8 +77,8 @@ func (b *Broker) dlqKey(queue string) string {
 }
 
 // Publish adds a task to the specified queue
-func (b *Broker) Publish(ctx context.Context, queue string, task *pb.Task) error {
-	data, err := proto.Marshal(task)
+func (b *Broker) Publish(ctx context.Context, queue string, task *types.TaskProto) error {
+	data, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("failed to marshal task: %w", err)
 	}
@@ -89,7 +89,7 @@ func (b *Broker) Publish(ctx context.Context, queue string, task *pb.Task) error
 	pipe.XAdd(ctx, &redis.XAddArgs{
 		Stream: b.streamKey(queue),
 		Values: map[string]interface{}{
-			"data": data,
+			"data": string(data),
 		},
 	})
 
@@ -180,18 +180,18 @@ func (b *Broker) processMessage(ctx context.Context, queue string, msg redis.XMe
 		return fmt.Errorf("invalid message format")
 	}
 
-	task := &pb.Task{}
-	if err := proto.Unmarshal([]byte(data), task); err != nil {
-		// Invalid protobuf, acknowledge and skip
+	task := &types.TaskProto{}
+	if err := json.Unmarshal([]byte(data), task); err != nil {
+		// Invalid JSON, acknowledge and skip
 		b.client.XAck(ctx, b.streamKey(queue), b.config.Group, msg.ID)
 		return fmt.Errorf("failed to unmarshal task: %w", err)
 	}
 
 	// Store stream message ID for acknowledgment
 	if task.Metadata == nil {
-		task.Metadata = &pb.TaskMetadata{}
+		task.Metadata = &types.TaskMetadata{}
 	}
-	task.Metadata.StreamMsgId = msg.ID
+	task.Metadata.StreamMsgID = msg.ID
 
 	// Call the handler
 	if err := handler(ctx, task); err != nil {
@@ -257,7 +257,7 @@ func (b *Broker) claimStale(ctx context.Context, queue string, handler broker.Ta
 		}).Result()
 
 		if err != nil {
-			if errors.Is(err, redis.Nil) {
+			if err == redis.Nil {
 				break
 			}
 			return err
@@ -273,6 +273,7 @@ func (b *Broker) claimStale(ctx context.Context, queue string, handler broker.Ta
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -283,26 +284,25 @@ func (b *Broker) Ack(ctx context.Context, queue string, msgID string) error {
 	pipe.XDel(ctx, b.streamKey(queue), msgID) // Remove from stream after ack
 	pipe.HIncrBy(ctx, statsPrefix+queue, "completed", 1)
 	_, err := pipe.Exec(ctx)
-
 	return err
 }
 
 // Schedule adds a task to be processed at a specific time
-func (b *Broker) Schedule(ctx context.Context, task *pb.Task, processAt time.Time) error {
-	data, err := proto.Marshal(task)
+func (b *Broker) Schedule(ctx context.Context, task *types.TaskProto, processAt time.Time) error {
+	data, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("failed to marshal task: %w", err)
 	}
 
 	return b.client.ZAdd(ctx, scheduledKey, redis.Z{
 		Score:  float64(processAt.Unix()),
-		Member: data,
+		Member: string(data),
 	}).Err()
 }
 
 // GetScheduled retrieves and REMOVES tasks that are ready to be processed
 // Uses ZPOPMIN for atomic get-and-delete
-func (b *Broker) GetScheduled(ctx context.Context, until time.Time, limit int64) ([]*pb.Task, error) {
+func (b *Broker) GetScheduled(ctx context.Context, until time.Time, limit int64) ([]*types.TaskProto, error) {
 	// First, get the count of ready tasks
 	members, err := b.client.ZRangeByScore(ctx, scheduledKey, &redis.ZRangeBy{
 		Min:   "-inf",
@@ -320,7 +320,7 @@ func (b *Broker) GetScheduled(ctx context.Context, until time.Time, limit int64)
 		return nil, err
 	}
 
-	tasks := make([]*pb.Task, 0, len(results))
+	tasks := make([]*types.TaskProto, 0, len(results))
 	now := float64(until.Unix())
 
 	for _, z := range results {
@@ -332,18 +332,16 @@ func (b *Broker) GetScheduled(ctx context.Context, until time.Time, limit int64)
 		}
 
 		// Handle both string and []byte member types
-		var data []byte
+		var data string
 		switch v := z.Member.(type) {
 		case string:
-			data = []byte(v)
-		case []byte:
 			data = v
 		default:
 			continue
 		}
 
-		task := &pb.Task{}
-		if err := proto.Unmarshal(data, task); err != nil {
+		task := &types.TaskProto{}
+		if err := json.Unmarshal([]byte(data), task); err != nil {
 			continue
 		}
 		tasks = append(tasks, task)
@@ -353,15 +351,15 @@ func (b *Broker) GetScheduled(ctx context.Context, until time.Time, limit int64)
 }
 
 // MoveToQueue moves a task directly to its target queue (task already removed from sorted set)
-func (b *Broker) MoveToQueue(ctx context.Context, task *pb.Task) error {
-	queue := task.Options.GetQueue()
+func (b *Broker) MoveToQueue(ctx context.Context, task *types.TaskProto) error {
+	queue := task.Options.Queue
 	if queue == "" {
 		queue = "default"
 	}
 
 	// Update state
-	task.Metadata.State = pb.TaskState_TASK_STATE_PENDING
-	data, err := proto.Marshal(task)
+	task.Metadata.State = types.TaskStatePending
+	data, err := json.Marshal(task)
 	if err != nil {
 		return err
 	}
@@ -369,19 +367,19 @@ func (b *Broker) MoveToQueue(ctx context.Context, task *pb.Task) error {
 	return b.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: b.streamKey(queue),
 		Values: map[string]interface{}{
-			"data": data,
+			"data": string(data),
 		},
 	}).Err()
 }
 
 // Retry schedules a task for retry with backoff
-func (b *Broker) Retry(ctx context.Context, queue string, task *pb.Task, delay time.Duration) error {
+func (b *Broker) Retry(ctx context.Context, queue string, task *types.TaskProto, delay time.Duration) error {
 	if task.Metadata == nil {
-		task.Metadata = &pb.TaskMetadata{}
+		task.Metadata = &types.TaskMetadata{}
 	}
-	task.Metadata.State = pb.TaskState_TASK_STATE_RETRY
+	task.Metadata.State = types.TaskStateRetry
 
-	data, err := proto.Marshal(task)
+	data, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("failed to marshal task: %w", err)
 	}
@@ -391,15 +389,15 @@ func (b *Broker) Retry(ctx context.Context, queue string, task *pb.Task, delay t
 	pipe := b.client.Pipeline()
 
 	// Remove from current stream if we have the message ID
-	if task.Metadata.StreamMsgId != "" {
-		pipe.XAck(ctx, b.streamKey(queue), b.config.Group, task.Metadata.StreamMsgId)
-		pipe.XDel(ctx, b.streamKey(queue), task.Metadata.StreamMsgId)
+	if task.Metadata.StreamMsgID != "" {
+		pipe.XAck(ctx, b.streamKey(queue), b.config.Group, task.Metadata.StreamMsgID)
+		pipe.XDel(ctx, b.streamKey(queue), task.Metadata.StreamMsgID)
 	}
 
 	// Add to retry sorted set
 	pipe.ZAdd(ctx, retryKey, redis.Z{
 		Score:  float64(processAt.Unix()),
-		Member: data,
+		Member: string(data),
 	})
 
 	_, err = pipe.Exec(ctx)
@@ -408,7 +406,7 @@ func (b *Broker) Retry(ctx context.Context, queue string, task *pb.Task, delay t
 
 // GetRetry retrieves and REMOVES tasks that are ready to be retried
 // Uses ZPOPMIN for atomic get-and-delete
-func (b *Broker) GetRetry(ctx context.Context, until time.Time, limit int64) ([]*pb.Task, error) {
+func (b *Broker) GetRetry(ctx context.Context, until time.Time, limit int64) ([]*types.TaskProto, error) {
 	// First, get the count of ready tasks
 	members, err := b.client.ZRangeByScore(ctx, retryKey, &redis.ZRangeBy{
 		Min:   "-inf",
@@ -426,7 +424,7 @@ func (b *Broker) GetRetry(ctx context.Context, until time.Time, limit int64) ([]
 		return nil, err
 	}
 
-	tasks := make([]*pb.Task, 0, len(results))
+	tasks := make([]*types.TaskProto, 0, len(results))
 	now := float64(until.Unix())
 
 	for _, z := range results {
@@ -438,18 +436,16 @@ func (b *Broker) GetRetry(ctx context.Context, until time.Time, limit int64) ([]
 		}
 
 		// Handle both string and []byte member types
-		var data []byte
+		var data string
 		switch v := z.Member.(type) {
 		case string:
-			data = []byte(v)
-		case []byte:
 			data = v
 		default:
 			continue
 		}
 
-		task := &pb.Task{}
-		if err := proto.Unmarshal(data, task); err != nil {
+		task := &types.TaskProto{}
+		if err := json.Unmarshal([]byte(data), task); err != nil {
 			continue
 		}
 		tasks = append(tasks, task)
@@ -459,16 +455,16 @@ func (b *Broker) GetRetry(ctx context.Context, until time.Time, limit int64) ([]
 }
 
 // MoveToDLQ moves a failed task to the dead letter queue
-func (b *Broker) MoveToDLQ(ctx context.Context, queue string, task *pb.Task, taskErr error) error {
+func (b *Broker) MoveToDLQ(ctx context.Context, queue string, task *types.TaskProto, taskErr error) error {
 	if task.Metadata == nil {
-		task.Metadata = &pb.TaskMetadata{}
+		task.Metadata = &types.TaskMetadata{}
 	}
-	task.Metadata.State = pb.TaskState_TASK_STATE_DEAD
+	task.Metadata.State = types.TaskStateDead
 	if taskErr != nil {
 		task.Metadata.LastError = taskErr.Error()
 	}
 
-	data, err := proto.Marshal(task)
+	data, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("failed to marshal task: %w", err)
 	}
@@ -476,16 +472,16 @@ func (b *Broker) MoveToDLQ(ctx context.Context, queue string, task *pb.Task, tas
 	pipe := b.client.Pipeline()
 
 	// Acknowledge and remove from original queue
-	if task.Metadata.StreamMsgId != "" {
-		pipe.XAck(ctx, b.streamKey(queue), b.config.Group, task.Metadata.StreamMsgId)
-		pipe.XDel(ctx, b.streamKey(queue), task.Metadata.StreamMsgId)
+	if task.Metadata.StreamMsgID != "" {
+		pipe.XAck(ctx, b.streamKey(queue), b.config.Group, task.Metadata.StreamMsgID)
+		pipe.XDel(ctx, b.streamKey(queue), task.Metadata.StreamMsgID)
 	}
 
 	// Add to DLQ stream
 	pipe.XAdd(ctx, &redis.XAddArgs{
 		Stream: b.dlqKey(queue),
 		Values: map[string]interface{}{
-			"data": data,
+			"data": string(data),
 		},
 	})
 
@@ -494,28 +490,30 @@ func (b *Broker) MoveToDLQ(ctx context.Context, queue string, task *pb.Task, tas
 }
 
 // GetDLQ retrieves tasks from the dead letter queue
-func (b *Broker) GetDLQ(ctx context.Context, queue string, limit int64) ([]*pb.Task, error) {
+func (b *Broker) GetDLQ(ctx context.Context, queue string, limit int64) ([]*types.TaskProto, error) {
 	messages, err := b.client.XRange(ctx, b.dlqKey(queue), "-", "+").Result()
 	if err != nil {
 		return nil, err
 	}
 
-	tasks := make([]*pb.Task, 0, len(messages))
+	tasks := make([]*types.TaskProto, 0, len(messages))
+	count := int64(0)
+
 	for _, msg := range messages {
+		if limit > 0 && count >= limit {
+			break
+		}
+
 		data, ok := msg.Values["data"].(string)
 		if !ok {
 			continue
 		}
-		task := &pb.Task{}
-		if err := proto.Unmarshal([]byte(data), task); err != nil {
+		task := &types.TaskProto{}
+		if err := json.Unmarshal([]byte(data), task); err != nil {
 			continue
 		}
-		task.Metadata.StreamMsgId = msg.ID
 		tasks = append(tasks, task)
-
-		if int64(len(tasks)) >= limit {
-			break
-		}
+		count++
 	}
 
 	return tasks, nil
@@ -534,18 +532,18 @@ func (b *Broker) RetryFromDLQ(ctx context.Context, queue string, taskID string) 
 		if !ok {
 			continue
 		}
-		task := &pb.Task{}
-		if err := proto.Unmarshal([]byte(data), task); err != nil {
+		task := &types.TaskProto{}
+		if err := json.Unmarshal([]byte(data), task); err != nil {
 			continue
 		}
 
-		if task.Id == taskID {
+		if task.ID == taskID {
 			// Reset task state
-			task.Metadata.State = pb.TaskState_TASK_STATE_PENDING
+			task.Metadata.State = types.TaskStatePending
 			task.Metadata.RetryCount = 0
 			task.Metadata.LastError = ""
 
-			newData, _ := proto.Marshal(task)
+			newData, _ := json.Marshal(task)
 
 			pipe := b.client.Pipeline()
 			// Remove from DLQ
@@ -554,7 +552,7 @@ func (b *Broker) RetryFromDLQ(ctx context.Context, queue string, taskID string) 
 			pipe.XAdd(ctx, &redis.XAddArgs{
 				Stream: b.streamKey(queue),
 				Values: map[string]interface{}{
-					"data": newData,
+					"data": string(newData),
 				},
 			})
 			// Clear processed key so task can be processed again
@@ -582,8 +580,8 @@ func (b *Broker) SetUnique(ctx context.Context, uniqueKey string, taskID string,
 }
 
 // GetQueueInfo returns statistics for a queue
-func (b *Broker) GetQueueInfo(ctx context.Context, queue string) (*pb.QueueInfo, error) {
-	info := &pb.QueueInfo{Name: queue}
+func (b *Broker) GetQueueInfo(ctx context.Context, queue string) (*types.QueueInfo, error) {
+	info := &types.QueueInfo{Name: queue}
 
 	// Get stream length (total unprocessed messages)
 	streamLen, err := b.client.XLen(ctx, b.streamKey(queue)).Result()
@@ -631,7 +629,12 @@ func (b *Broker) GetQueues(ctx context.Context) ([]string, error) {
 
 // PurgeQueue removes all tasks from a queue
 func (b *Broker) PurgeQueue(ctx context.Context, queue string) error {
-	return b.client.Del(ctx, b.streamKey(queue)).Err()
+	// Delete the stream
+	if err := b.client.Del(ctx, b.streamKey(queue)).Err(); err != nil {
+		return err
+	}
+	// Reset stats
+	return b.client.Del(ctx, statsPrefix+queue).Err()
 }
 
 // PurgeDLQ removes all tasks from the dead letter queue
@@ -650,9 +653,9 @@ func (b *Broker) Close() error {
 	defer b.mu.Unlock()
 
 	if b.closed {
-		return nil
+		return errors.New("broker already closed")
 	}
-	b.closed = true
 
-	return b.client.Close()
+	b.closed = true
+	return nil
 }

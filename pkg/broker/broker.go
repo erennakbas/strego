@@ -5,14 +5,14 @@ import (
 	"context"
 	"time"
 
-	pb "github.com/erennakbas/strego/internal/proto"
+	"github.com/erennakbas/strego/pkg/types"
 )
 
 // Broker defines the interface for task queue operations.
 // The primary implementation uses Redis Streams.
 type Broker interface {
 	// Publish adds a task to the specified queue
-	Publish(ctx context.Context, queue string, task *pb.Task) error
+	Publish(ctx context.Context, queue string, task *types.TaskProto) error
 
 	// Subscribe starts consuming tasks from the specified queues
 	// The handler is called for each task received
@@ -22,25 +22,25 @@ type Broker interface {
 	Ack(ctx context.Context, queue string, msgID string) error
 
 	// Schedule adds a task to be processed at a specific time
-	Schedule(ctx context.Context, task *pb.Task, processAt time.Time) error
+	Schedule(ctx context.Context, task *types.TaskProto, processAt time.Time) error
 
 	// GetScheduled retrieves tasks that are ready to be processed
-	GetScheduled(ctx context.Context, until time.Time, limit int64) ([]*pb.Task, error)
+	GetScheduled(ctx context.Context, until time.Time, limit int64) ([]*types.TaskProto, error)
 
 	// MoveToQueue moves a scheduled task to its target queue
-	MoveToQueue(ctx context.Context, task *pb.Task) error
+	MoveToQueue(ctx context.Context, task *types.TaskProto) error
 
 	// Retry schedules a task for retry with backoff
-	Retry(ctx context.Context, queue string, task *pb.Task, delay time.Duration) error
+	Retry(ctx context.Context, queue string, task *types.TaskProto, delay time.Duration) error
 
 	// GetRetry retrieves tasks that are ready to be retried
-	GetRetry(ctx context.Context, until time.Time, limit int64) ([]*pb.Task, error)
+	GetRetry(ctx context.Context, until time.Time, limit int64) ([]*types.TaskProto, error)
 
 	// MoveToDLQ moves a failed task to the dead letter queue
-	MoveToDLQ(ctx context.Context, queue string, task *pb.Task, err error) error
+	MoveToDLQ(ctx context.Context, queue string, task *types.TaskProto, err error) error
 
 	// GetDLQ retrieves tasks from the dead letter queue
-	GetDLQ(ctx context.Context, queue string, limit int64) ([]*pb.Task, error)
+	GetDLQ(ctx context.Context, queue string, limit int64) ([]*types.TaskProto, error)
 
 	// RetryFromDLQ moves a task from DLQ back to the main queue
 	RetryFromDLQ(ctx context.Context, queue string, taskID string) error
@@ -52,7 +52,7 @@ type Broker interface {
 	SetUnique(ctx context.Context, uniqueKey string, taskID string, ttl time.Duration) (bool, error)
 
 	// GetQueueInfo returns statistics for a queue
-	GetQueueInfo(ctx context.Context, queue string) (*pb.QueueInfo, error)
+	GetQueueInfo(ctx context.Context, queue string) (*types.QueueInfo, error)
 
 	// GetQueues returns all known queue names
 	GetQueues(ctx context.Context) ([]string, error)
@@ -71,7 +71,7 @@ type Broker interface {
 }
 
 // TaskHandler is called when a task is received from the queue
-type TaskHandler func(ctx context.Context, task *pb.Task) error
+type TaskHandler func(ctx context.Context, task *types.TaskProto) error
 
 // ConsumerConfig configures the consumer behavior
 type ConsumerConfig struct {

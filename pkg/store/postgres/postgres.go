@@ -11,11 +11,9 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/erennakbas/strego/internal/proto"
 	"github.com/erennakbas/strego/pkg/store"
+	"github.com/erennakbas/strego/pkg/types"
 )
 
 // ErrTaskNotFound is returned when a task is not found.
@@ -83,7 +81,7 @@ func (s *Store) migrate() error {
 		type VARCHAR(255) NOT NULL,
 		queue VARCHAR(255) NOT NULL DEFAULT 'default',
 		state VARCHAR(50) NOT NULL DEFAULT 'pending',
-		payload BYTEA NOT NULL,
+		payload JSONB NOT NULL DEFAULT '{}',
 		error TEXT,
 		retry_count INT DEFAULT 0,
 		max_retry INT DEFAULT 3,
@@ -116,64 +114,11 @@ func (s *Store) migrate() error {
 	return err
 }
 
-// stateToString converts a protobuf TaskState to a string.
-func stateToString(state pb.TaskState) string {
-	switch state {
-	case pb.TaskState_TASK_STATE_PENDING:
-		return "pending"
-	case pb.TaskState_TASK_STATE_SCHEDULED:
-		return "scheduled"
-	case pb.TaskState_TASK_STATE_ACTIVE:
-		return "active"
-	case pb.TaskState_TASK_STATE_COMPLETED:
-		return "completed"
-	case pb.TaskState_TASK_STATE_FAILED:
-		return "failed"
-	case pb.TaskState_TASK_STATE_RETRY:
-		return "retry"
-	case pb.TaskState_TASK_STATE_DEAD:
-		return "dead"
-	case pb.TaskState_TASK_STATE_CANCELLED:
-		return "cancelled"
-	default:
-		return "pending"
-	}
-}
-
-// stringToState converts a string to a protobuf TaskState.
-func stringToState(state string) pb.TaskState {
-	switch state {
-	case "pending":
-		return pb.TaskState_TASK_STATE_PENDING
-	case "scheduled":
-		return pb.TaskState_TASK_STATE_SCHEDULED
-	case "active":
-		return pb.TaskState_TASK_STATE_ACTIVE
-	case "completed":
-		return pb.TaskState_TASK_STATE_COMPLETED
-	case "failed":
-		return pb.TaskState_TASK_STATE_FAILED
-	case "retry":
-		return pb.TaskState_TASK_STATE_RETRY
-	case "dead":
-		return pb.TaskState_TASK_STATE_DEAD
-	case "cancelled":
-		return pb.TaskState_TASK_STATE_CANCELLED
-	default:
-		return pb.TaskState_TASK_STATE_UNSPECIFIED
-	}
-}
-
 // CreateTask saves a new task to the store.
-func (s *Store) CreateTask(ctx context.Context, task *pb.Task) error {
-	payload, err := proto.Marshal(task)
-	if err != nil {
-		return fmt.Errorf("failed to marshal task: %w", err)
-	}
-
-	state := "pending"
-	if task.Metadata != nil {
-		state = stateToString(task.Metadata.State)
+func (s *Store) CreateTask(ctx context.Context, task *types.TaskProto) error {
+	state := types.TaskStatePending
+	if task.Metadata != nil && task.Metadata.State != "" {
+		state = task.Metadata.State
 	}
 
 	queue := "default"
@@ -182,6 +127,7 @@ func (s *Store) CreateTask(ctx context.Context, task *pb.Task) error {
 	var uniqueKey *string
 	var scheduledAt *time.Time
 	labels := "{}"
+	payload := "{}"
 
 	if task.Options != nil {
 		if task.Options.Queue != "" {
@@ -195,8 +141,7 @@ func (s *Store) CreateTask(ctx context.Context, task *pb.Task) error {
 			uniqueKey = &task.Options.UniqueKey
 		}
 		if task.Options.ProcessAt != nil {
-			t := task.Options.ProcessAt.AsTime()
-			scheduledAt = &t
+			scheduledAt = task.Options.ProcessAt
 		}
 		if task.Options.Labels != nil {
 			labelsJSON, _ := json.Marshal(task.Options.Labels)
@@ -204,9 +149,13 @@ func (s *Store) CreateTask(ctx context.Context, task *pb.Task) error {
 		}
 	}
 
+	if len(task.Payload) > 0 {
+		payload = string(task.Payload)
+	}
+
 	var createdAt time.Time
 	if task.Metadata != nil && task.Metadata.CreatedAt != nil {
-		createdAt = task.Metadata.CreatedAt.AsTime()
+		createdAt = *task.Metadata.CreatedAt
 	} else {
 		createdAt = time.Now()
 	}
@@ -216,15 +165,15 @@ func (s *Store) CreateTask(ctx context.Context, task *pb.Task) error {
 			id, type, queue, state, payload, 
 			max_retry, priority, created_at, scheduled_at, 
 			unique_key, labels
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11::jsonb)
 		ON CONFLICT (id) DO NOTHING
 	`
 
-	_, err = s.db.ExecContext(ctx, query,
-		task.Id,
+	_, err := s.db.ExecContext(ctx, query,
+		task.ID,
 		task.Type,
 		queue,
-		state,
+		string(state),
 		payload,
 		maxRetry,
 		priority,
@@ -242,29 +191,25 @@ func (s *Store) CreateTask(ctx context.Context, task *pb.Task) error {
 }
 
 // UpdateTask updates an existing task.
-func (s *Store) UpdateTask(ctx context.Context, task *pb.Task) error {
-	state := "pending"
+func (s *Store) UpdateTask(ctx context.Context, task *types.TaskProto) error {
+	state := types.TaskStatePending
 	retryCount := 0
 	var startedAt, completedAt *time.Time
 	var lastError *string
 	var workerID *string
 
 	if task.Metadata != nil {
-		state = stateToString(task.Metadata.State)
+		if task.Metadata.State != "" {
+			state = task.Metadata.State
+		}
 		retryCount = int(task.Metadata.RetryCount)
-		if task.Metadata.StartedAt != nil {
-			t := task.Metadata.StartedAt.AsTime()
-			startedAt = &t
-		}
-		if task.Metadata.CompletedAt != nil {
-			t := task.Metadata.CompletedAt.AsTime()
-			completedAt = &t
-		}
+		startedAt = task.Metadata.StartedAt
+		completedAt = task.Metadata.CompletedAt
 		if task.Metadata.LastError != "" {
 			lastError = &task.Metadata.LastError
 		}
-		if task.Metadata.WorkerId != "" {
-			workerID = &task.Metadata.WorkerId
+		if task.Metadata.WorkerID != "" {
+			workerID = &task.Metadata.WorkerID
 		}
 	}
 
@@ -280,8 +225,8 @@ func (s *Store) UpdateTask(ctx context.Context, task *pb.Task) error {
 	`
 
 	result, err := s.db.ExecContext(ctx, query,
-		task.Id,
-		state,
+		task.ID,
+		string(state),
 		retryCount,
 		startedAt,
 		completedAt,
@@ -327,7 +272,7 @@ func (s *Store) UpdateTaskState(ctx context.Context, taskID, state, errMsg strin
 }
 
 // GetTask retrieves a task by ID.
-func (s *Store) GetTask(ctx context.Context, taskID string) (*pb.Task, error) {
+func (s *Store) GetTask(ctx context.Context, taskID string) (*types.TaskProto, error) {
 	query := `
 		SELECT id, type, queue, state, payload, error, retry_count, max_retry,
 		       priority, created_at, scheduled_at, started_at, completed_at,
@@ -339,7 +284,7 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*pb.Task, error) {
 
 	var (
 		id, taskType, queue, state          string
-		payload                             []byte
+		payload                             string
 		errMsg, workerID, traceID           sql.NullString
 		uniqueKey                           sql.NullString
 		retryCount, maxRetry, priority      int
@@ -362,19 +307,19 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*pb.Task, error) {
 		return nil, fmt.Errorf("failed to get task: %w", err)
 	}
 
-	task := &pb.Task{
-		Id:      id,
+	task := &types.TaskProto{
+		ID:      id,
 		Type:    taskType,
-		Payload: payload,
-		Options: &pb.TaskOptions{
+		Payload: json.RawMessage(payload),
+		Options: &types.TaskOptions{
 			Queue:    queue,
 			MaxRetry: int32(maxRetry),
 			Priority: int32(priority),
 		},
-		Metadata: &pb.TaskMetadata{
-			State:      stringToState(state),
+		Metadata: &types.TaskMetadata{
+			State:      types.TaskState(state),
 			RetryCount: int32(retryCount),
-			CreatedAt:  timestamppb.New(createdAt),
+			CreatedAt:  &createdAt,
 		},
 	}
 
@@ -382,22 +327,22 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*pb.Task, error) {
 		task.Metadata.LastError = errMsg.String
 	}
 	if workerID.Valid {
-		task.Metadata.WorkerId = workerID.String
+		task.Metadata.WorkerID = workerID.String
 	}
 	if traceID.Valid {
-		task.Metadata.TraceId = traceID.String
+		task.Metadata.TraceID = traceID.String
 	}
 	if uniqueKey.Valid {
 		task.Options.UniqueKey = uniqueKey.String
 	}
 	if scheduledAt.Valid {
-		task.Options.ProcessAt = timestamppb.New(scheduledAt.Time)
+		task.Options.ProcessAt = &scheduledAt.Time
 	}
 	if startedAt.Valid {
-		task.Metadata.StartedAt = timestamppb.New(startedAt.Time)
+		task.Metadata.StartedAt = &startedAt.Time
 	}
 	if completedAt.Valid {
-		task.Metadata.CompletedAt = timestamppb.New(completedAt.Time)
+		task.Metadata.CompletedAt = &completedAt.Time
 	}
 
 	if labelsJSON != "" && labelsJSON != "{}" {
@@ -411,7 +356,7 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*pb.Task, error) {
 }
 
 // ListTasks retrieves tasks matching the filter.
-func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*pb.Task, int64, error) {
+func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*types.TaskProto, int64, error) {
 	var conditions []string
 	var args []interface{}
 	argIdx := 1
@@ -503,11 +448,11 @@ func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*pb.T
 	}
 	defer rows.Close()
 
-	var tasks []*pb.Task
+	var tasks []*types.TaskProto
 	for rows.Next() {
 		var (
 			id, taskType, queue, state          string
-			payload                             []byte
+			payload                             string
 			errMsg, workerID, traceID           sql.NullString
 			uniqueKey                           sql.NullString
 			retryCount, maxRetry, priority      int
@@ -526,19 +471,19 @@ func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*pb.T
 			return nil, 0, fmt.Errorf("failed to scan task: %w", err)
 		}
 
-		task := &pb.Task{
-			Id:      id,
+		task := &types.TaskProto{
+			ID:      id,
 			Type:    taskType,
-			Payload: payload,
-			Options: &pb.TaskOptions{
+			Payload: json.RawMessage(payload),
+			Options: &types.TaskOptions{
 				Queue:    queue,
 				MaxRetry: int32(maxRetry),
 				Priority: int32(priority),
 			},
-			Metadata: &pb.TaskMetadata{
-				State:      stringToState(state),
+			Metadata: &types.TaskMetadata{
+				State:      types.TaskState(state),
 				RetryCount: int32(retryCount),
-				CreatedAt:  timestamppb.New(createdAt),
+				CreatedAt:  &createdAt,
 			},
 		}
 
@@ -546,13 +491,13 @@ func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*pb.T
 			task.Metadata.LastError = errMsg.String
 		}
 		if workerID.Valid {
-			task.Metadata.WorkerId = workerID.String
+			task.Metadata.WorkerID = workerID.String
 		}
 		if startedAt.Valid {
-			task.Metadata.StartedAt = timestamppb.New(startedAt.Time)
+			task.Metadata.StartedAt = &startedAt.Time
 		}
 		if completedAt.Valid {
-			task.Metadata.CompletedAt = timestamppb.New(completedAt.Time)
+			task.Metadata.CompletedAt = &completedAt.Time
 		}
 
 		tasks = append(tasks, task)

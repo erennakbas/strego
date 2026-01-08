@@ -44,7 +44,7 @@
                 {{range .Tasks}}
                 <tr class="hover:bg-gray-800/50 transition-colors">
                     <td class="px-4 py-3">
-                        <a href="/tasks/{{.Id}}" class="font-mono text-sm hover:text-strego-400">{{truncate .Id 8}}</a>
+                        <a href="/tasks/{{.ID}}" class="font-mono text-sm hover:text-strego-400">{{truncate .ID 8}}</a>
                     </td>
                     <td class="px-4 py-3 text-gray-300">{{.Type}}</td>
                     <td class="px-4 py-3 text-center">
@@ -53,7 +53,7 @@
                         </span>
                     </td>
                     <td class="px-4 py-3 text-right text-sm text-gray-500">
-                        {{if .Metadata.CreatedAt}}{{formatTime .Metadata.CreatedAt.AsTime}}{{else}}-{{end}}
+                        {{if .Metadata.CreatedAt}}{{formatTime .Metadata.CreatedAt}}{{else}}-{{end}}
                     </td>
                 </tr>
                 {{end}}

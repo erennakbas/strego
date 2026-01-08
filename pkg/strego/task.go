@@ -2,40 +2,63 @@
 package strego
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/erennakbas/strego/internal/proto"
+	"github.com/erennakbas/strego/pkg/types"
+)
+
+// Re-export types for convenience
+type (
+	TaskState    = types.TaskState
+	TaskProto    = types.TaskProto
+	TaskOptions  = types.TaskOptions
+	TaskMetadata = types.TaskMetadata
+	TaskInfo     = types.TaskInfo
+	QueueInfo    = types.QueueInfo
+)
+
+// Task state constants
+const (
+	TaskStateUnspecified = types.TaskStateUnspecified
+	TaskStatePending     = types.TaskStatePending
+	TaskStateScheduled   = types.TaskStateScheduled
+	TaskStateActive      = types.TaskStateActive
+	TaskStateCompleted   = types.TaskStateCompleted
+	TaskStateFailed      = types.TaskStateFailed
+	TaskStateRetry       = types.TaskStateRetry
+	TaskStateDead        = types.TaskStateDead
+	TaskStateCancelled   = types.TaskStateCancelled
 )
 
 // Task represents a unit of work to be processed.
 type Task struct {
-	pb *pb.Task
+	proto *types.TaskProto
 }
 
-// NewTask creates a new task with the given type and protobuf payload.
-func NewTask(taskType string, payload proto.Message, opts ...TaskOption) (*Task, error) {
-	data, err := proto.Marshal(payload)
+// NewTask creates a new task with a typed payload.
+// The payload will be JSON-encoded.
+func NewTask[T any](taskType string, payload T, opts ...TaskOption) (*Task, error) {
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
+	now := time.Now()
 	t := &Task{
-		pb: &pb.Task{
-			Id:      uuid.NewString(),
+		proto: &types.TaskProto{
+			ID:      uuid.NewString(),
 			Type:    taskType,
 			Payload: data,
-			Options: &pb.TaskOptions{
+			Options: &types.TaskOptions{
 				Queue:    "default",
 				MaxRetry: 3,
 			},
-			Metadata: &pb.TaskMetadata{
-				State:     pb.TaskState_TASK_STATE_PENDING,
-				CreatedAt: timestamppb.Now(),
+			Metadata: &types.TaskMetadata{
+				State:     types.TaskStatePending,
+				CreatedAt: &now,
 			},
 		},
 	}
@@ -47,20 +70,21 @@ func NewTask(taskType string, payload proto.Message, opts ...TaskOption) (*Task,
 	return t, nil
 }
 
-// NewTaskFromBytes creates a new task with raw bytes payload.
+// NewTaskFromBytes creates a new task with raw JSON bytes payload.
 func NewTaskFromBytes(taskType string, payload []byte, opts ...TaskOption) *Task {
+	now := time.Now()
 	t := &Task{
-		pb: &pb.Task{
-			Id:      uuid.NewString(),
+		proto: &types.TaskProto{
+			ID:      uuid.NewString(),
 			Type:    taskType,
 			Payload: payload,
-			Options: &pb.TaskOptions{
+			Options: &types.TaskOptions{
 				Queue:    "default",
 				MaxRetry: 3,
 			},
-			Metadata: &pb.TaskMetadata{
-				State:     pb.TaskState_TASK_STATE_PENDING,
-				CreatedAt: timestamppb.Now(),
+			Metadata: &types.TaskMetadata{
+				State:     types.TaskStatePending,
+				CreatedAt: &now,
 			},
 		},
 	}
@@ -74,126 +98,80 @@ func NewTaskFromBytes(taskType string, payload []byte, opts ...TaskOption) *Task
 
 // ID returns the task ID.
 func (t *Task) ID() string {
-	return t.pb.Id
+	return t.proto.ID
 }
 
 // Type returns the task type.
 func (t *Task) Type() string {
-	return t.pb.Type
+	return t.proto.Type
 }
 
 // Payload returns the raw payload bytes.
 func (t *Task) Payload() []byte {
-	return t.pb.Payload
+	return t.proto.Payload
 }
 
 // Queue returns the queue name.
 func (t *Task) Queue() string {
-	if t.pb.Options != nil {
-		return t.pb.Options.Queue
+	if t.proto.Options != nil && t.proto.Options.Queue != "" {
+		return t.proto.Options.Queue
 	}
 	return "default"
 }
 
 // State returns the current task state.
-func (t *Task) State() TaskState {
-	if t.pb.Metadata != nil {
-		return TaskState(t.pb.Metadata.State)
+func (t *Task) State() types.TaskState {
+	if t.proto.Metadata != nil {
+		return t.proto.Metadata.State
 	}
-	return TaskStatePending
+	return types.TaskStatePending
 }
 
 // RetryCount returns the number of retry attempts.
 func (t *Task) RetryCount() int {
-	if t.pb.Metadata != nil {
-		return int(t.pb.Metadata.RetryCount)
+	if t.proto.Metadata != nil {
+		return int(t.proto.Metadata.RetryCount)
 	}
 	return 0
 }
 
 // MaxRetry returns the maximum retry attempts.
 func (t *Task) MaxRetry() int {
-	if t.pb.Options != nil {
-		return int(t.pb.Options.MaxRetry)
+	if t.proto.Options != nil {
+		return int(t.proto.Options.MaxRetry)
 	}
 	return 3
 }
 
 // LastError returns the last error message.
 func (t *Task) LastError() string {
-	if t.pb.Metadata != nil {
-		return t.pb.Metadata.LastError
+	if t.proto.Metadata != nil {
+		return t.proto.Metadata.LastError
 	}
 	return ""
 }
 
 // Labels returns the task labels.
 func (t *Task) Labels() map[string]string {
-	if t.pb.Options != nil {
-		return t.pb.Options.Labels
+	if t.proto.Options != nil {
+		return t.proto.Options.Labels
 	}
 	return nil
 }
 
-// Proto returns the underlying protobuf message.
-func (t *Task) Proto() *pb.Task {
-	return t.pb
+// Proto returns the underlying task proto structure.
+func (t *Task) Proto() *types.TaskProto {
+	return t.proto
 }
 
-// Unmarshal extracts the payload into a protobuf message.
-func Unmarshal[T proto.Message](t *Task, msg T) error {
-	return proto.Unmarshal(t.pb.Payload, msg)
+// Unmarshal extracts the payload into a typed struct.
+func Unmarshal[T any](t *Task, v *T) error {
+	return json.Unmarshal(t.proto.Payload, v)
 }
 
-// TaskFromProto creates a Task from a protobuf message.
-func TaskFromProto(pbTask *pb.Task) *Task {
-	return &Task{pb: pbTask}
-}
-
-// TaskState represents the state of a task.
-type TaskState int32
-
-const (
-	TaskStateUnspecified TaskState = 0
-	TaskStatePending     TaskState = 1
-	TaskStateScheduled   TaskState = 2
-	TaskStateActive      TaskState = 3
-	TaskStateCompleted   TaskState = 4
-	TaskStateFailed      TaskState = 5
-	TaskStateRetry       TaskState = 6
-	TaskStateDead        TaskState = 7
-	TaskStateCancelled   TaskState = 8
-)
-
-func (s TaskState) String() string {
-	switch s {
-	case TaskStatePending:
-		return "pending"
-	case TaskStateScheduled:
-		return "scheduled"
-	case TaskStateActive:
-		return "active"
-	case TaskStateCompleted:
-		return "completed"
-	case TaskStateFailed:
-		return "failed"
-	case TaskStateRetry:
-		return "retry"
-	case TaskStateDead:
-		return "dead"
-	case TaskStateCancelled:
-		return "cancelled"
-	default:
-		return "unspecified"
-	}
-}
-
-// TaskInfo contains information about an enqueued task.
-type TaskInfo struct {
-	ID        string
-	Queue     string
-	State     TaskState
-	ProcessAt time.Time
+// TaskFromProto creates a Task from a TaskProto.
+func TaskFromProto(proto *types.TaskProto) *Task {
+	return &Task{proto: proto}
 }
 
 // TaskOption configures a task.
@@ -202,44 +180,44 @@ type TaskOption func(*Task)
 // WithQueue sets the queue name.
 func WithQueue(queue string) TaskOption {
 	return func(t *Task) {
-		if t.pb.Options == nil {
-			t.pb.Options = &pb.TaskOptions{}
+		if t.proto.Options == nil {
+			t.proto.Options = &types.TaskOptions{}
 		}
-		t.pb.Options.Queue = queue
+		t.proto.Options.Queue = queue
 	}
 }
 
 // WithMaxRetry sets the maximum retry attempts.
 func WithMaxRetry(n int) TaskOption {
 	return func(t *Task) {
-		if t.pb.Options == nil {
-			t.pb.Options = &pb.TaskOptions{}
+		if t.proto.Options == nil {
+			t.proto.Options = &types.TaskOptions{}
 		}
-		t.pb.Options.MaxRetry = int32(n)
+		t.proto.Options.MaxRetry = int32(n)
 	}
 }
 
 // WithTimeout sets the task processing timeout.
 func WithTimeout(d time.Duration) TaskOption {
 	return func(t *Task) {
-		if t.pb.Options == nil {
-			t.pb.Options = &pb.TaskOptions{}
+		if t.proto.Options == nil {
+			t.proto.Options = &types.TaskOptions{}
 		}
-		t.pb.Options.Timeout = durationpb.New(d)
+		t.proto.Options.Timeout = d
 	}
 }
 
 // WithProcessAt sets when the task should be processed.
 func WithProcessAt(at time.Time) TaskOption {
 	return func(t *Task) {
-		if t.pb.Options == nil {
-			t.pb.Options = &pb.TaskOptions{}
+		if t.proto.Options == nil {
+			t.proto.Options = &types.TaskOptions{}
 		}
-		t.pb.Options.ProcessAt = timestamppb.New(at)
-		if t.pb.Metadata == nil {
-			t.pb.Metadata = &pb.TaskMetadata{}
+		t.proto.Options.ProcessAt = &at
+		if t.proto.Metadata == nil {
+			t.proto.Metadata = &types.TaskMetadata{}
 		}
-		t.pb.Metadata.State = pb.TaskState_TASK_STATE_SCHEDULED
+		t.proto.Metadata.State = types.TaskStateScheduled
 	}
 }
 
@@ -251,43 +229,43 @@ func WithProcessIn(d time.Duration) TaskOption {
 // WithPriority sets the task priority (0-10, higher = more important).
 func WithPriority(priority int) TaskOption {
 	return func(t *Task) {
-		if t.pb.Options == nil {
-			t.pb.Options = &pb.TaskOptions{}
+		if t.proto.Options == nil {
+			t.proto.Options = &types.TaskOptions{}
 		}
-		t.pb.Options.Priority = int32(priority)
+		t.proto.Options.Priority = int32(priority)
 	}
 }
 
 // WithUniqueKey sets a unique key for deduplication.
 func WithUniqueKey(key string, ttl time.Duration) TaskOption {
 	return func(t *Task) {
-		if t.pb.Options == nil {
-			t.pb.Options = &pb.TaskOptions{}
+		if t.proto.Options == nil {
+			t.proto.Options = &types.TaskOptions{}
 		}
-		t.pb.Options.UniqueKey = key
-		t.pb.Options.UniqueTtl = durationpb.New(ttl)
+		t.proto.Options.UniqueKey = key
+		t.proto.Options.UniqueTTL = ttl
 	}
 }
 
 // WithLabels sets custom labels on the task.
 func WithLabels(labels map[string]string) TaskOption {
 	return func(t *Task) {
-		if t.pb.Options == nil {
-			t.pb.Options = &pb.TaskOptions{}
+		if t.proto.Options == nil {
+			t.proto.Options = &types.TaskOptions{}
 		}
-		t.pb.Options.Labels = labels
+		t.proto.Options.Labels = labels
 	}
 }
 
 // WithLabel adds a single label to the task.
 func WithLabel(key, value string) TaskOption {
 	return func(t *Task) {
-		if t.pb.Options == nil {
-			t.pb.Options = &pb.TaskOptions{}
+		if t.proto.Options == nil {
+			t.proto.Options = &types.TaskOptions{}
 		}
-		if t.pb.Options.Labels == nil {
-			t.pb.Options.Labels = make(map[string]string)
+		if t.proto.Options.Labels == nil {
+			t.proto.Options.Labels = make(map[string]string)
 		}
-		t.pb.Options.Labels[key] = value
+		t.proto.Options.Labels[key] = value
 	}
 }

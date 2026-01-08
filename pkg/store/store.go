@@ -5,26 +5,26 @@ import (
 	"context"
 	"time"
 
-	pb "github.com/erennakbas/strego/internal/proto"
+	"github.com/erennakbas/strego/pkg/types"
 )
 
 // Store defines the interface for task persistence.
 // This is optional and used for task history, search, and UI features.
 type Store interface {
 	// CreateTask saves a new task to the store.
-	CreateTask(ctx context.Context, task *pb.Task) error
+	CreateTask(ctx context.Context, task *types.TaskProto) error
 
 	// UpdateTask updates an existing task.
-	UpdateTask(ctx context.Context, task *pb.Task) error
+	UpdateTask(ctx context.Context, task *types.TaskProto) error
 
 	// UpdateTaskState updates only the state and error of a task.
 	UpdateTaskState(ctx context.Context, taskID, state, errMsg string) error
 
 	// GetTask retrieves a task by ID.
-	GetTask(ctx context.Context, taskID string) (*pb.Task, error)
+	GetTask(ctx context.Context, taskID string) (*types.TaskProto, error)
 
 	// ListTasks retrieves tasks matching the filter.
-	ListTasks(ctx context.Context, filter TaskFilter) ([]*pb.Task, int64, error)
+	ListTasks(ctx context.Context, filter TaskFilter) ([]*types.TaskProto, int64, error)
 
 	// CountTasks returns the count of tasks matching the filter.
 	CountTasks(ctx context.Context, filter TaskFilter) (int64, error)

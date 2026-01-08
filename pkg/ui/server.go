@@ -144,11 +144,21 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // Helper functions
 
-func formatTime(t time.Time) string {
-	if t.IsZero() {
+func formatTime(t interface{}) string {
+	switch v := t.(type) {
+	case time.Time:
+		if v.IsZero() {
+			return "-"
+		}
+		return v.Format("2006-01-02 15:04:05")
+	case *time.Time:
+		if v == nil || v.IsZero() {
+			return "-"
+		}
+		return v.Format("2006-01-02 15:04:05")
+	default:
 		return "-"
 	}
-	return t.Format("2006-01-02 15:04:05")
 }
 
 func formatDuration(d time.Duration) string {
@@ -673,7 +683,7 @@ func (s *Server) handleRetryAllDead(w http.ResponseWriter, r *http.Request) {
 
 	retried := 0
 	for _, task := range tasks {
-		if err := s.broker.RetryFromDLQ(r.Context(), queue, task.Id); err == nil {
+		if err := s.broker.RetryFromDLQ(r.Context(), queue, task.ID); err == nil {
 			retried++
 		}
 	}

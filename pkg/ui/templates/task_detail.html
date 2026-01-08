@@ -17,7 +17,7 @@
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <label class="text-sm text-gray-500">ID</label>
-                            <div class="font-mono text-sm mt-1 break-all">{{.Task.Id}}</div>
+                            <div class="font-mono text-sm mt-1 break-all">{{.Task.ID}}</div>
                         </div>
                         <div>
                             <label class="text-sm text-gray-500">Type</label>
@@ -83,7 +83,7 @@
                         <div>
                             <div class="text-sm font-medium">Created</div>
                             <div class="text-xs text-gray-500">
-                                {{if .Task.Metadata.CreatedAt}}{{formatTime .Task.Metadata.CreatedAt.AsTime}}{{else}}-{{end}}
+                                {{if .Task.Metadata.CreatedAt}}{{formatTime .Task.Metadata.CreatedAt}}{{else}}-{{end}}
                             </div>
                         </div>
                     </div>
@@ -92,7 +92,7 @@
                         <div class="w-2 h-2 mt-2 rounded-full bg-cyan-500"></div>
                         <div>
                             <div class="text-sm font-medium">Started</div>
-                            <div class="text-xs text-gray-500">{{formatTime .Task.Metadata.StartedAt.AsTime}}</div>
+                            <div class="text-xs text-gray-500">{{formatTime .Task.Metadata.StartedAt}}</div>
                         </div>
                     </div>
                     {{end}}
@@ -101,7 +101,7 @@
                         <div class="w-2 h-2 mt-2 rounded-full bg-green-500"></div>
                         <div>
                             <div class="text-sm font-medium">Completed</div>
-                            <div class="text-xs text-gray-500">{{formatTime .Task.Metadata.CompletedAt.AsTime}}</div>
+                            <div class="text-xs text-gray-500">{{formatTime .Task.Metadata.CompletedAt}}</div>
                         </div>
                     </div>
                     {{end}}
@@ -126,12 +126,12 @@
                     <h3 class="font-semibold">Actions</h3>
                 </div>
                 <div class="p-4 space-y-2">
-                    <button hx-post="/tasks/{{.Task.Id}}/retry?queue={{.Task.Options.Queue}}"
+                    <button hx-post="/tasks/{{.Task.ID}}/retry?queue={{.Task.Options.Queue}}"
                         hx-swap="outerHTML"
                         class="w-full bg-strego-600 hover:bg-strego-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                         🔄 Retry Task
                     </button>
-                    <button hx-post="/tasks/{{.Task.Id}}/delete"
+                    <button hx-post="/tasks/{{.Task.ID}}/delete"
                         hx-confirm="Are you sure you want to delete this task?"
                         hx-swap="outerHTML"
                         class="w-full bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">

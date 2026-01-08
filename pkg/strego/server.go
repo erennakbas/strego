@@ -12,9 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	pb "github.com/erennakbas/strego/internal/proto"
 	"github.com/erennakbas/strego/pkg/broker"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/erennakbas/strego/pkg/types"
 )
 
 // Default configuration values
@@ -235,8 +234,8 @@ func (s *Server) Shutdown() {
 }
 
 // processTask handles a single task from the broker.
-func (s *Server) processTask(ctx context.Context, pbTask *pb.Task) error {
-	task := TaskFromProto(pbTask)
+func (s *Server) processTask(ctx context.Context, proto *types.TaskProto) error {
+	task := TaskFromProto(proto)
 
 	s.logger.Debug("processing task",
 		"task_id", task.ID(),
@@ -259,12 +258,13 @@ func (s *Server) processTask(ctx context.Context, pbTask *pb.Task) error {
 	}
 
 	// Update task state to active
-	pbTask.Metadata.State = pb.TaskState_TASK_STATE_ACTIVE
-	pbTask.Metadata.StartedAt = timestamppb.Now()
-	pbTask.Metadata.WorkerId = s.workerID
+	now := time.Now()
+	proto.Metadata.State = types.TaskStateActive
+	proto.Metadata.StartedAt = &now
+	proto.Metadata.WorkerID = s.workerID
 
 	if s.store != nil {
-		if err := s.store.UpdateTask(ctx, pbTask); err != nil {
+		if err := s.store.UpdateTask(ctx, proto); err != nil {
 			s.logger.Warn("failed to update task state in store",
 				"task_id", task.ID(), "error", err)
 		}
@@ -282,12 +282,9 @@ func (s *Server) processTask(ctx context.Context, pbTask *pb.Task) error {
 	// Create a timeout context if configured
 	taskCtx := ctx
 	var taskCancel context.CancelFunc
-	if pbTask.Options != nil && pbTask.Options.Timeout != nil {
-		timeout := pbTask.Options.Timeout.AsDuration()
-		if timeout > 0 {
-			taskCtx, taskCancel = context.WithTimeout(ctx, timeout)
-			defer taskCancel()
-		}
+	if proto.Options != nil && proto.Options.Timeout > 0 {
+		taskCtx, taskCancel = context.WithTimeout(ctx, proto.Options.Timeout)
+		defer taskCancel()
 	}
 
 	// Execute the handler
@@ -310,11 +307,12 @@ func (s *Server) processTask(ctx context.Context, pbTask *pb.Task) error {
 		"task_type", task.Type(),
 		"duration", duration)
 
-	pbTask.Metadata.State = pb.TaskState_TASK_STATE_COMPLETED
-	pbTask.Metadata.CompletedAt = timestamppb.Now()
+	completedAt := time.Now()
+	proto.Metadata.State = types.TaskStateCompleted
+	proto.Metadata.CompletedAt = &completedAt
 
 	if s.store != nil {
-		if err := s.store.UpdateTask(ctx, pbTask); err != nil {
+		if err := s.store.UpdateTask(ctx, proto); err != nil {
 			s.logger.Warn("failed to update completed task in store",
 				"task_id", task.ID(), "error", err)
 		}
@@ -325,38 +323,39 @@ func (s *Server) processTask(ctx context.Context, pbTask *pb.Task) error {
 
 // handleFailure decides whether to retry or move to DLQ.
 func (s *Server) handleFailure(ctx context.Context, task *Task, taskErr error) error {
-	pbTask := task.Proto()
+	proto := task.Proto()
 
 	// Increment retry count
-	if pbTask.Metadata == nil {
-		pbTask.Metadata = &pb.TaskMetadata{}
+	if proto.Metadata == nil {
+		proto.Metadata = &types.TaskMetadata{}
 	}
-	pbTask.Metadata.RetryCount++
-	pbTask.Metadata.LastError = taskErr.Error()
+	proto.Metadata.RetryCount++
+	proto.Metadata.LastError = taskErr.Error()
 
 	maxRetry := int32(3)
-	if pbTask.Options != nil && pbTask.Options.MaxRetry > 0 {
-		maxRetry = pbTask.Options.MaxRetry
+	if proto.Options != nil && proto.Options.MaxRetry > 0 {
+		maxRetry = proto.Options.MaxRetry
 	}
 
 	queue := task.Queue()
 
-	if pbTask.Metadata.RetryCount >= maxRetry {
+	if proto.Metadata.RetryCount >= maxRetry {
 		// Max retries exceeded, move to DLQ
 		s.logger.Warn("max retries exceeded, moving to DLQ",
 			"task_id", task.ID(),
-			"retry_count", pbTask.Metadata.RetryCount)
+			"retry_count", proto.Metadata.RetryCount)
 
-		if err := s.broker.MoveToDLQ(ctx, queue, pbTask, taskErr); err != nil {
+		if err := s.broker.MoveToDLQ(ctx, queue, proto, taskErr); err != nil {
 			s.logger.Error("failed to move task to DLQ",
 				"task_id", task.ID(), "error", err)
 			return err
 		}
 
 		if s.store != nil {
-			pbTask.Metadata.State = pb.TaskState_TASK_STATE_DEAD
-			pbTask.Metadata.CompletedAt = timestamppb.Now()
-			if err := s.store.UpdateTask(ctx, pbTask); err != nil {
+			now := time.Now()
+			proto.Metadata.State = types.TaskStateDead
+			proto.Metadata.CompletedAt = &now
+			if err := s.store.UpdateTask(ctx, proto); err != nil {
 				s.logger.Warn("failed to update dead task in store",
 					"task_id", task.ID(), "error", err)
 			} else {
@@ -368,26 +367,26 @@ func (s *Server) handleFailure(ctx context.Context, task *Task, taskErr error) e
 	}
 
 	// Calculate exponential backoff
-	delay := s.calculateBackoff(int(pbTask.Metadata.RetryCount))
+	delay := s.calculateBackoff(int(proto.Metadata.RetryCount))
 
 	s.logger.Info("scheduling retry",
 		"task_id", task.ID(),
-		"retry_count", pbTask.Metadata.RetryCount,
+		"retry_count", proto.Metadata.RetryCount,
 		"delay", delay)
 
-	if err := s.broker.Retry(ctx, queue, pbTask, delay); err != nil {
+	if err := s.broker.Retry(ctx, queue, proto, delay); err != nil {
 		s.logger.Error("failed to schedule retry",
 			"task_id", task.ID(), "error", err)
 		return err
 	}
 
 	if s.store != nil {
-		pbTask.Metadata.State = pb.TaskState_TASK_STATE_RETRY
-		if err := s.store.UpdateTask(ctx, pbTask); err != nil {
+		proto.Metadata.State = types.TaskStateRetry
+		if err := s.store.UpdateTask(ctx, proto); err != nil {
 			s.logger.Warn("failed to update retry task in store",
 				"task_id", task.ID(), "error", err)
 		} else {
-			s.logger.Debug("updated retry task in store", "task_id", task.ID(), "retry_count", pbTask.Metadata.RetryCount)
+			s.logger.Debug("updated retry task in store", "task_id", task.ID(), "retry_count", proto.Metadata.RetryCount)
 		}
 	}
 
@@ -435,13 +434,18 @@ func (s *Server) processScheduled(ctx context.Context) {
 	for _, task := range tasks {
 		if err := s.broker.MoveToQueue(ctx, task); err != nil {
 			s.logger.Error("failed to move scheduled task to queue",
-				"task_id", task.Id, "error", err)
+				"task_id", task.ID, "error", err)
 			continue
 		}
 
+		queue := "default"
+		if task.Options != nil && task.Options.Queue != "" {
+			queue = task.Options.Queue
+		}
+
 		s.logger.Debug("moved scheduled task to queue",
-			"task_id", task.Id,
-			"queue", task.Options.GetQueue())
+			"task_id", task.ID,
+			"queue", queue)
 	}
 }
 
@@ -460,13 +464,23 @@ func (s *Server) processRetries(ctx context.Context) {
 	for _, task := range tasks {
 		if err := s.broker.MoveToQueue(ctx, task); err != nil {
 			s.logger.Error("failed to move retry task to queue",
-				"task_id", task.Id, "error", err)
+				"task_id", task.ID, "error", err)
 			continue
 		}
 
+		queue := "default"
+		if task.Options != nil && task.Options.Queue != "" {
+			queue = task.Options.Queue
+		}
+
+		retryCount := int32(0)
+		if task.Metadata != nil {
+			retryCount = task.Metadata.RetryCount
+		}
+
 		s.logger.Info("moved retry task to queue",
-			"task_id", task.Id,
-			"queue", task.Options.GetQueue(),
-			"retry_count", task.Metadata.GetRetryCount())
+			"task_id", task.ID,
+			"queue", queue,
+			"retry_count", retryCount)
 	}
 }

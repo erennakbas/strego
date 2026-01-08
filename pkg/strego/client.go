@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"time"
 
-	pb "github.com/erennakbas/strego/internal/proto"
 	"github.com/erennakbas/strego/pkg/broker"
+	"github.com/erennakbas/strego/pkg/types"
 )
 
 // ErrDuplicateTask is returned when a unique task already exists.
@@ -54,21 +54,21 @@ func NewClient(b broker.Broker, opts ...ClientOption) *Client {
 
 // Enqueue adds a task to the queue for processing.
 // If the task has a ProcessAt option set, it will be scheduled for later.
-func (c *Client) Enqueue(ctx context.Context, task *Task) (*TaskInfo, error) {
+func (c *Client) Enqueue(ctx context.Context, task *Task) (*types.TaskInfo, error) {
 	if task == nil {
 		return nil, errors.New("task cannot be nil")
 	}
 
-	pbTask := task.Proto()
+	proto := task.Proto()
 
 	// Handle unique task deduplication
-	if pbTask.Options != nil && pbTask.Options.UniqueKey != "" {
+	if proto.Options != nil && proto.Options.UniqueKey != "" {
 		ttl := time.Hour // default
-		if pbTask.Options.UniqueTtl != nil {
-			ttl = pbTask.Options.UniqueTtl.AsDuration()
+		if proto.Options.UniqueTTL > 0 {
+			ttl = proto.Options.UniqueTTL
 		}
 
-		ok, err := c.broker.SetUnique(ctx, pbTask.Options.UniqueKey, pbTask.Id, ttl)
+		ok, err := c.broker.SetUnique(ctx, proto.Options.UniqueKey, proto.ID, ttl)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check uniqueness: %w", err)
 		}
@@ -78,47 +78,47 @@ func (c *Client) Enqueue(ctx context.Context, task *Task) (*TaskInfo, error) {
 	}
 
 	// Check if this is a scheduled task
-	isScheduled := pbTask.Options != nil &&
-		pbTask.Options.ProcessAt != nil &&
-		pbTask.Options.ProcessAt.AsTime().After(time.Now())
+	isScheduled := proto.Options != nil &&
+		proto.Options.ProcessAt != nil &&
+		proto.Options.ProcessAt.After(time.Now())
 
 	queue := "default"
-	if pbTask.Options != nil && pbTask.Options.Queue != "" {
-		queue = pbTask.Options.Queue
+	if proto.Options != nil && proto.Options.Queue != "" {
+		queue = proto.Options.Queue
 	}
 
 	if isScheduled {
 		// Schedule for later
-		pbTask.Metadata.State = pb.TaskState_TASK_STATE_SCHEDULED
-		if err := c.broker.Schedule(ctx, pbTask, pbTask.Options.ProcessAt.AsTime()); err != nil {
+		proto.Metadata.State = types.TaskStateScheduled
+		if err := c.broker.Schedule(ctx, proto, *proto.Options.ProcessAt); err != nil {
 			return nil, fmt.Errorf("failed to schedule task: %w", err)
 		}
 	} else {
 		// Enqueue immediately
-		pbTask.Metadata.State = pb.TaskState_TASK_STATE_PENDING
-		if err := c.broker.Publish(ctx, queue, pbTask); err != nil {
+		proto.Metadata.State = types.TaskStatePending
+		if err := c.broker.Publish(ctx, queue, proto); err != nil {
 			return nil, fmt.Errorf("failed to enqueue task: %w", err)
 		}
 	}
 
 	// Save to store (sync, fail-safe)
 	if c.store != nil {
-		if err := c.store.CreateTask(ctx, pbTask); err != nil {
+		if err := c.store.CreateTask(ctx, proto); err != nil {
 			c.logger.Warn("failed to save task to store",
-				"task_id", pbTask.Id,
+				"task_id", proto.ID,
 				"error", err)
 			// Continue - Redis is primary
 		}
 	}
 
-	info := &TaskInfo{
-		ID:    pbTask.Id,
+	info := &types.TaskInfo{
+		ID:    proto.ID,
 		Queue: queue,
-		State: TaskState(pbTask.Metadata.State),
+		State: proto.Metadata.State,
 	}
 
 	if isScheduled {
-		info.ProcessAt = pbTask.Options.ProcessAt.AsTime()
+		info.ProcessAt = proto.Options.ProcessAt
 	}
 
 	return info, nil
@@ -126,23 +126,23 @@ func (c *Client) Enqueue(ctx context.Context, task *Task) (*TaskInfo, error) {
 
 // EnqueueUnique adds a task with a unique key for deduplication.
 // If a task with the same key already exists within the TTL, ErrDuplicateTask is returned.
-func (c *Client) EnqueueUnique(ctx context.Context, task *Task, uniqueKey string, ttl time.Duration) (*TaskInfo, error) {
+func (c *Client) EnqueueUnique(ctx context.Context, task *Task, uniqueKey string, ttl time.Duration) (*types.TaskInfo, error) {
 	if task == nil {
 		return nil, errors.New("task cannot be nil")
 	}
 
 	// Set the unique key option
-	pbTask := task.Proto()
-	if pbTask.Options == nil {
-		pbTask.Options = &pb.TaskOptions{}
+	proto := task.Proto()
+	if proto.Options == nil {
+		proto.Options = &types.TaskOptions{}
 	}
-	pbTask.Options.UniqueKey = uniqueKey
+	proto.Options.UniqueKey = uniqueKey
 
 	return c.Enqueue(ctx, task)
 }
 
 // Schedule adds a task to be processed at a specific time.
-func (c *Client) Schedule(ctx context.Context, task *Task, processAt time.Time) (*TaskInfo, error) {
+func (c *Client) Schedule(ctx context.Context, task *Task, processAt time.Time) (*types.TaskInfo, error) {
 	if task == nil {
 		return nil, errors.New("task cannot be nil")
 	}
@@ -170,16 +170,16 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 		return nil, errors.New("GetTask requires a store to be configured")
 	}
 
-	pbTask, err := c.store.GetTask(ctx, taskID)
+	proto, err := c.store.GetTask(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
 
-	return TaskFromProto(pbTask), nil
+	return TaskFromProto(proto), nil
 }
 
 // GetQueueInfo returns statistics for a queue.
-func (c *Client) GetQueueInfo(ctx context.Context, queue string) (*pb.QueueInfo, error) {
+func (c *Client) GetQueueInfo(ctx context.Context, queue string) (*types.QueueInfo, error) {
 	return c.broker.GetQueueInfo(ctx, queue)
 }
 

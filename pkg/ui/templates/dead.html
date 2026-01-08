@@ -38,9 +38,9 @@
             </thead>
             <tbody class="divide-y divide-gray-800">
                 {{range $tasks}}
-                <tr class="hover:bg-gray-800/50 transition-colors" id="task-row-{{.Id}}">
+                <tr class="hover:bg-gray-800/50 transition-colors" id="task-row-{{.ID}}">
                     <td class="px-4 py-3">
-                        <span class="font-mono text-sm">{{truncate .Id 8}}</span>
+                        <span class="font-mono text-sm">{{truncate .ID 8}}</span>
                     </td>
                     <td class="px-4 py-3 text-gray-300">{{.Type}}</td>
                     <td class="px-4 py-3">
@@ -48,8 +48,8 @@
                     </td>
                     <td class="px-4 py-3 text-center text-gray-400">{{.Metadata.RetryCount}}</td>
                     <td class="px-4 py-3 text-right">
-                        <button hx-post="/tasks/{{.Id}}/retry?queue={{$queue}}"
-                            hx-target="#task-row-{{.Id}}"
+                        <button hx-post="/tasks/{{.ID}}/retry?queue={{$queue}}"
+                            hx-target="#task-row-{{.ID}}"
                             hx-swap="outerHTML"
                             class="text-sm text-strego-400 hover:text-strego-300">
                             Retry
