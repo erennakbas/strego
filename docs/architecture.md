@@ -40,7 +40,68 @@ A task goes through several states during its lifecycle:
 ## Redis Data Structures
 
 ```plantuml
+@startuml Redis Data Structures
 
+skinparam rectangle {
+    BackgroundColor<<stream>> LightBlue
+    BackgroundColor<<sortedset>> LightGreen
+    BackgroundColor<<string>> LightYellow
+    BackgroundColor<<hash>> LightCoral
+    BackgroundColor<<set>> Lavender
+}
+
+package "Task Queues" {
+    rectangle "strego:stream:{queue}\n**STREAM**\n\nMain task queue\nConsumer groups for load balancing\nAt-least-once delivery" <<stream>> as stream
+    
+    rectangle "strego:dlq:{queue}\n**STREAM**\n\nDead Letter Queue\nFailed tasks after max retries\nManual retry via UI" <<stream>> as dlq
+}
+
+package "Scheduling" {
+    rectangle "strego:scheduled\n**SORTED SET**\n\nScore: Unix timestamp\nMember: Task JSON\nScheduler polls every 1s" <<sortedset>> as scheduled
+    
+    rectangle "strego:retry\n**SORTED SET**\n\nScore: Retry timestamp\nMember: Task JSON\nExponential backoff" <<sortedset>> as retry
+}
+
+package "Idempotency & Deduplication" {
+    rectangle "strego:processed:{task_id}\n**STRING + TTL**\n\nValue: \"1\"\nTTL: 24 hours (configurable)\nExactly-once processing" <<string>> as processed
+    
+    rectangle "strego:unique:{key}\n**STRING + TTL**\n\nValue: task_id\nTTL: User-defined\nTask deduplication" <<string>> as unique
+}
+
+package "Metadata" {
+    rectangle "strego:stats:{queue}\n**HASH**\n\nenqueued: count\ncompleted: count\nscheduled: count" <<hash>> as stats
+    
+    rectangle "strego:queues\n**SET**\n\nAll known queue names\nUsed by GetQueues()" <<set>> as queues
+}
+
+note right of stream
+  **Stream Entry Format (JSON):**
+  {
+    "id": "uuid",
+    "type": "email:send",
+    "payload": {"to": "..."},
+    "options": {
+      "queue": "default",
+      "max_retry": 3
+    },
+    "metadata": {
+      "state": "pending",
+      "created_at": "2024-..."
+    }
+  }
+end note
+
+note right of scheduled
+  **ZAdd Example:**
+  ZADD strego:scheduled 
+    1704672000 
+    '{"id":"abc",...}'
+  
+  **Scheduler reads with:**
+  ZPOPMIN strego:scheduled
+end note
+
+@enduml
 ```
 
 ## Scaling & Performance
@@ -57,7 +118,7 @@ A task goes through several states during its lifecycle:
 ## Key Design Decisions
 
 1. **Redis Streams over Lists**: Native consumer groups, better crash recovery, built-in message tracking
-2. **Protobuf Serialization**: Type-safe, efficient, language-agnostic
+2. **JSON Serialization**: Human-readable, debuggable, no code generation needed
 3. **Lazy Queue Creation**: Queues created on first use, no upfront cost
 4. **Idempotency via SET NX**: Exactly-once processing guarantee
 5. **Exponential Backoff**: Configurable retry strategy with max duration cap

@@ -5,7 +5,7 @@ A modern, production-ready distributed task queue library for Go.
 ## Features
 
 - **Redis Streams** - Native consumer groups, at-least-once delivery, crash recovery
-- **Protobuf** - Type-safe, fast, language-agnostic serialization
+- **JSON** - Human-readable, debuggable, no code generation needed
 - **Exactly-once processing** - Idempotency via Redis SET NX
 - **Dead Letter Queue** - Failed tasks after max retries
 - **Scheduled tasks** - Delayed and cron-based execution
@@ -260,7 +260,7 @@ strego:queues                 # Set - all queue names
 | Feature | asynq | machinery | strego |
 |---------|-------|-----------|--------|
 | Redis Backend | Lists | Lists | **Streams** |
-| Serialization | JSON | JSON | **Protobuf** |
+| Serialization | JSON | JSON | **JSON** |
 | Consumer Groups | Custom | Custom | **Native** |
 | Crash Recovery | Limited | Limited | **Built-in** |
 | PostgreSQL | ❌ | ❌ | ✅ |
