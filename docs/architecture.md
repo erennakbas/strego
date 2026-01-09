@@ -14,332 +14,30 @@ This document describes the architecture and design of Strego, a distributed tas
 ## System Overview
 
 Strego is built on top of Redis Streams and provides a production-ready task queue system with features like scheduled tasks, retries, dead letter queues, and exactly-once processing.
+<img width="991" height="401" alt="image" src="https://github.com/user-attachments/assets/0ee8fa97-952f-4f88-9286-1b458d0799dd" />
 
-```plantuml
-@startuml System Architecture
-!theme plain
-skinparam componentStyle rectangle
-
-package "Application Layer" {
-  component [Client] as Client
-  component [Server] as Server
-  component [Web UI] as UI
-}
-
-package "Strego Core" {
-  component [Broker Interface] as Broker
-  component [Store Interface] as Store
-}
-
-package "Redis" {
-  component "Streams\nstrego:stream:*" as Streams
-  component "DLQ\nstrego:dlq:*" as DLQ
-  component "Scheduled\nstrego:scheduled" as Scheduled
-  component "Retry\nstrego:retry" as Retry
-  component "Idempotency\nstrego:processed:*" as Idempotency
-}
-
-database "PostgreSQL\n(Optional)" as PG {
-  component [Task History] as TaskDB
-}
-
-Client --> Broker : Enqueue
-Server --> Broker : Subscribe
-UI --> Broker : Query
-UI --> Store : Query
-
-Broker --> Streams
-Broker --> DLQ
-Broker --> Scheduled
-Broker --> Retry
-Broker --> Idempotency
-
-Client ..> Store : Optional
-Server ..> Store : Optional
-Store --> TaskDB
-
-@enduml
-```
 
 ## Component Architecture
+<img width="978" height="318" alt="image" src="https://github.com/user-attachments/assets/2dbec6c5-194c-4a53-94c0-1439db1ec0af" />
 
-```plantuml
-@startuml Component Diagram
-!theme plain
-skinparam componentStyle rectangle
-
-package "pkg/strego" {
-  component [Client] as Client
-  component [Server] as Server
-  component [Task] as Task
-  component [Handler] as Handler
-  component [ServeMux] as ServeMux
-}
-
-package "pkg/broker" {
-  interface "Broker" as IBroker
-  component [Redis Broker] as RedisBroker
-}
-
-package "pkg/store" {
-  interface "Store" as IStore
-  component [PostgreSQL Store] as PGStore
-}
-
-package "pkg/types" {
-  component [TaskProto] as TaskProto
-  component [TaskMetadata] as Metadata
-  component [TaskOptions] as Options
-}
-
-Client --> IBroker
-Client --> IStore
-Server --> IBroker
-Server --> IStore
-Server --> ServeMux
-ServeMux --> Handler
-
-IBroker <|.. RedisBroker
-IStore <|.. PGStore
-
-Task --> TaskProto
-TaskProto --> Metadata
-TaskProto --> Options
-
-@enduml
-```
 
 ## Task Lifecycle
 
 A task goes through several states during its lifecycle:
 
-```plantuml
-@startuml Task Lifecycle
-!theme plain
-skinparam state {
-  BackgroundColor LightBlue
-  BorderColor DarkBlue
-}
-
-[*] --> Pending : Enqueue
-Pending --> Scheduled : ProcessAt in future
-Scheduled --> Pending : Scheduler moves to queue
-Pending --> Active : Consumer picks up
-Active --> Completed : Handler succeeds
-Active --> Retry : Handler fails (retry < max)
-Retry --> Pending : Backoff delay expires
-Active --> Dead : Handler fails (retry >= max)
-Completed --> [*]
-Dead --> [*]
-
-note right of Scheduled
-  Stored in Redis Sorted Set
-  (strego:scheduled)
-end note
-
-note right of Retry
-  Stored in Redis Sorted Set
-  (strego:retry)
-  with exponential backoff
-end note
-
-note right of Dead
-  Moved to Dead Letter Queue
-  (strego:dlq:queue)
-end note
-
-@enduml
-```
-
 ## Task Processing Flow
+<img width="924" height="536" alt="image" src="https://github.com/user-attachments/assets/1a53994e-2820-48ee-b8ce-fba512694cdc" />
 
 ### Enqueue Flow
+<img width="797" height="846" alt="image" src="https://github.com/user-attachments/assets/38e9acef-a24c-4bd1-854c-3b1710c1107e" />
 
-```plantuml
-@startuml Enqueue Flow
-!theme plain
-
-actor "Application" as App
-participant "Client" as Client
-participant "Broker" as Broker
-database "Redis" as Redis
-database "PostgreSQL" as PG
-
-App -> Client: Enqueue(task)
-activate Client
-
-alt Unique Key Set
-  Client -> Broker: SetUnique(key, taskID, TTL)
-  Broker -> Redis: SET NX unique:key
-  Redis --> Broker: OK/NX
-  alt Key Exists
-    Broker --> Client: ErrDuplicateTask
-    Client --> App: Error
-    deactivate Client
-  end
-end
-
-alt ProcessAt in Future
-  Client -> Broker: Schedule(task, processAt)
-  Broker -> Redis: ZADD scheduled (score=processAt)
-  Redis --> Broker: OK
-else Immediate
-  Client -> Broker: Publish(queue, task)
-  Broker -> Redis: XADD stream:queue
-  Broker -> Redis: SADD queues
-  Broker -> Redis: HINCRBY stats:queue
-  Redis --> Broker: OK
-end
-
-opt PostgreSQL Store Configured
-  Client -> PG: INSERT task
-  PG --> Client: OK
-end
-
-Broker --> Client: Success
-Client --> App: TaskInfo
-deactivate Client
-
-@enduml
-```
 
 ### Processing Flow
-
-```plantuml
-@startuml Processing Flow
-!theme plain
-
-participant "Server" as Server
-participant "Broker" as Broker
-database "Redis" as Redis
-participant "Handler" as Handler
-database "PostgreSQL" as PG
-
-loop Consumer Loop
-  Server -> Broker: Subscribe(queues)
-  activate Broker
-  
-  Broker -> Redis: XReadGroup\n(Block 5s, Count 10)
-  activate Redis
-  Redis --> Broker: Messages
-  deactivate Redis
-  
-  Broker -> Server: processTask(task)
-  activate Server
-  
-  Server -> Broker: SetProcessed(taskID, TTL)
-  Broker -> Redis: SET NX processed:taskID
-  Redis --> Broker: OK/NX
-  
-  alt Already Processed
-    Server --> Broker: Skip (idempotency)
-  else New Task
-    Server -> PG: UPDATE state=active
-    activate PG
-    PG --> Server: OK
-    deactivate PG
-    
-    Server -> Handler: ProcessTask(ctx, task)
-    activate Handler
-    
-    alt Handler Succeeds
-      Handler --> Server: Success
-      deactivate Handler
-      
-      Server -> Broker: Ack(msgID)
-      Broker -> Redis: XACK + XDEL
-      activate Redis
-      Redis --> Broker: OK
-      deactivate Redis
-      
-      Server -> PG: UPDATE state=completed
-      activate PG
-      PG --> Server: OK
-      deactivate PG
-      
-    else Handler Fails
-      Handler --> Server: Error
-      deactivate Handler
-      
-      Server -> Server: handleFailure()
-      
-      alt Retry Count < Max
-        Server -> Broker: Retry(queue, task, delay)
-        Broker -> Redis: ZADD retry\n(score=now+delay)
-        activate Redis
-        Redis --> Broker: OK
-        deactivate Redis
-        
-        Server -> PG: UPDATE state=retry
-        activate PG
-        PG --> Server: OK
-        deactivate PG
-        
-      else Retry Count >= Max
-        Server -> Broker: MoveToDLQ(queue, task)
-        Broker -> Redis: XADD dlq:queue
-        Broker -> Redis: XACK original
-        activate Redis
-        Redis --> Broker: OK
-        deactivate Redis
-        
-        Server -> PG: UPDATE state=dead
-        activate PG
-        PG --> Server: OK
-        deactivate PG
-      end
-    end
-  end
-  
-  Server --> Broker: Done
-  deactivate Server
-  deactivate Broker
-end
-
-@enduml
-```
+<img width="754" height="1279" alt="image" src="https://github.com/user-attachments/assets/5e099c3b-69b0-45bd-bd77-49f678649823" />
 
 ### Scheduler Flow
+<img width="674" height="812" alt="image" src="https://github.com/user-attachments/assets/07d1a86a-419c-41f8-9405-b9607c5b821c" />
 
-```plantuml
-@startuml Scheduler Flow
-!theme plain
-
-participant "Server" as Server
-participant "Scheduler" as Scheduler
-participant "Broker" as Broker
-database "Redis" as Redis
-
-loop Every 1 Second
-  Scheduler -> Broker: GetScheduled(until=now, limit=100)
-  Broker -> Redis: ZRANGEBYSCORE scheduled\n(-inf, now)
-  Redis --> Broker: Tasks
-  Broker -> Redis: ZPOPMIN scheduled
-  Redis --> Broker: Tasks (removed)
-  Broker --> Scheduler: Tasks
-  
-  loop For Each Task
-    Scheduler -> Broker: MoveToQueue(task)
-    Broker -> Redis: XADD stream:queue
-    Redis --> Broker: OK
-  end
-  
-  Scheduler -> Broker: GetRetry(until=now, limit=100)
-  Broker -> Redis: ZRANGEBYSCORE retry\n(-inf, now)
-  Redis --> Broker: Tasks
-  Broker -> Redis: ZPOPMIN retry
-  Redis --> Broker: Tasks (removed)
-  Broker --> Scheduler: Tasks
-  
-  loop For Each Retry Task
-    Scheduler -> Broker: MoveToQueue(task)
-    Broker -> Redis: XADD stream:queue
-    Redis --> Broker: OK
-  end
-end
-
-@enduml
-```
 
 ## Redis Data Structures
 
@@ -389,80 +87,12 @@ package "Redis Keys" {
 
 ### Horizontal Scaling
 
-```plantuml
-@startuml Horizontal Scaling
-!theme plain
-
-cloud "Redis Streams" as Redis {
-  component "strego:stream:email" as EmailQueue
-  component "strego:stream:notification" as NotifQueue
-}
-
-node "Worker 1" as W1 {
-  component [Server] as S1
-  component "Consumer Group: strego-workers" as CG1
-}
-
-node "Worker 2" as W2 {
-  component [Server] as S2
-  component "Consumer Group: strego-workers" as CG2
-}
-
-node "Worker 3" as W3 {
-  component [Server] as S3
-  component "Consumer Group: strego-workers" as CG3
-}
-
-W1 --> Redis : XReadGroup
-W2 --> Redis : XReadGroup
-W3 --> Redis : XReadGroup
-
-Redis --> W1 : Message 1
-Redis --> W2 : Message 2
-Redis --> W3 : Message 3
-
-note right of Redis
-  Redis Streams Consumer Groups
-  automatically distribute messages
-  across workers in the same group
-end note
-
-@enduml
-```
+<img width="1539" height="338" alt="image" src="https://github.com/user-attachments/assets/75dd3d8f-26b4-4fac-a1aa-583a855fb3aa" />
 
 ### Queue Isolation
 
-```plantuml
-@startuml Queue Isolation
-!theme plain
+<img width="1023" height="260" alt="image" src="https://github.com/user-attachments/assets/1714c07d-2239-48db-a874-d8b47d9832e3" />
 
-package "Multiple Queues" {
-  component "strego:stream:email" as Email
-  component "strego:stream:payment" as Payment
-  component "strego:stream:analytics" as Analytics
-  component "strego:stream:report" as Report
-  component "..." as More
-}
-
-component "Server" as Server {
-  component "Single XReadGroup Call" as Read
-}
-
-Server --> Email
-Server --> Payment
-Server --> Analytics
-Server --> Report
-Server --> More
-
-note right of Server
-  All queues consumed in
-  a single efficient Redis call
-  Minimal overhead per queue
-  (~1-2KB when empty)
-end note
-
-@enduml
-```
 
 ## Key Design Decisions
 
