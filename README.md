@@ -15,6 +15,10 @@ A modern, production-ready distributed task queue library for Go.
 - **Built-in Web UI** - Dashboard with HTMX + Tailwind
 - **Multiple Queues** - Efficient queue isolation with minimal overhead
 
+## Documentation
+
+- [Architecture Documentation](docs/architecture.md) - Detailed architecture diagrams and design decisions
+
 ## Installation
 
 ```bash
