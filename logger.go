@@ -1,17 +1,16 @@
 package strego
 
 import (
+	"github.com/sirupsen/logrus"
+
 	"github.com/erennakbas/strego/types"
 )
 
-// Re-export Logger types from types package for convenience.
+// Logger is the interface for logging in strego.
+// It uses logrus.FieldLogger which is implemented by both *logrus.Logger and *logrus.Entry.
 type Logger = types.Logger
-type SlogLogger = types.SlogLogger
 
-// NewSlogLogger creates a new SlogLogger from slog.Logger.
-var NewSlogLogger = types.NewSlogLogger
-
-// defaultLogger returns the default slog-based logger.
+// defaultLogger returns the default logrus logger.
 func defaultLogger() Logger {
-	return types.DefaultLogger()
+	return logrus.StandardLogger()
 }

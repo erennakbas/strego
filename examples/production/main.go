@@ -4,8 +4,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"log/slog"
 	"os"
 	"os/signal"
 	"sync/atomic"
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
 
 	"github.com/erennakbas/strego"
 	"github.com/erennakbas/strego/broker"
@@ -30,11 +29,11 @@ var (
 
 func main() {
 	// Setup logger
-	slogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(slogger)
-	logger := strego.NewSlogLogger(slogger)
+	logger := logrus.New()
+	logger.SetLevel(logrus.InfoLevel)
+	logger.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+	})
 
 	ctx := context.Background()
 
@@ -46,9 +45,9 @@ func main() {
 	})
 
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Fatalf("failed to connect to redis: %v", err)
+		logger.WithError(err).Fatal("failed to connect to redis")
 	}
-	slogger.Info("✅ connected to redis")
+	logger.Info("✅ connected to redis")
 
 	// ============================================
 	// Connect to PostgreSQL
@@ -60,10 +59,10 @@ func main() {
 		ConnMaxLifetime: 5 * time.Minute,
 	})
 	if err != nil {
-		log.Fatalf("failed to connect to postgresql: %v", err)
+		logger.WithError(err).Fatal("failed to connect to postgresql")
 	}
 	defer pgStore.Close()
-	slogger.Info("✅ connected to postgresql")
+	logger.Info("✅ connected to postgresql")
 
 	// ============================================
 	// Create Broker
@@ -114,13 +113,13 @@ func main() {
 		Logger: logger,
 	})
 	if err != nil {
-		log.Fatalf("failed to create UI server: %v", err)
+		logger.WithError(err).Fatal("failed to create UI server")
 	}
 
 	go func() {
-		slogger.Info("🌐 UI ready at http://localhost:8080")
+		logger.Info("🌐 UI ready at http://localhost:8080")
 		if err := uiServer.Start(); err != nil {
-			slogger.Error("UI server error", "error", err)
+			logger.WithError(err).Error("UI server error")
 		}
 	}()
 
@@ -137,7 +136,7 @@ func main() {
 
 	go func() {
 		<-sigCh
-		slogger.Info("🛑 shutting down...")
+		logger.Info("🛑 shutting down...")
 		server.Shutdown()
 		uiServer.Shutdown(context.Background())
 	}()
@@ -145,9 +144,9 @@ func main() {
 	// ============================================
 	// Start Processing
 	// ============================================
-	slogger.Info("🚀 starting task processing...")
+	logger.Info("🚀 starting task processing...")
 	if err := server.Start(); err != nil {
-		log.Fatalf("server error: %v", err)
+		logger.WithError(err).Fatal("server error")
 	}
 }
 
@@ -155,13 +154,13 @@ func main() {
 // SCENARIOS
 // ============================================
 
-func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logger) {
+func runScenarios(ctx context.Context, client *strego.Client, logger *logrus.Logger) {
 	time.Sleep(2 * time.Second)
 
 	// ========== PHASE 1: All Success ==========
-	logger.Info("=" + strings.Repeat("=", 50))
+	logger.Info("===================================================")
 	logger.Info("📗 PHASE 1: All tasks will succeed")
-	logger.Info("=" + strings.Repeat("=", 50))
+	logger.Info("===================================================")
 
 	// Welcome emails - always succeed
 	for i := 1; i <= 5; i++ {
@@ -171,7 +170,7 @@ func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logg
 			strego.WithMaxRetry(3),
 		)
 		info, _ := client.Enqueue(ctx, task)
-		logger.Info("📧 enqueued welcome email", "task_id", info.ID[:8])
+		logger.WithField("task_id", info.ID[:8]).Info("📧 enqueued welcome email")
 		time.Sleep(200 * time.Millisecond)
 	}
 
@@ -180,9 +179,9 @@ func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logg
 	time.Sleep(10 * time.Second)
 
 	// ========== PHASE 2: 1 Retry Needed ==========
-	logger.Info("=" + strings.Repeat("=", 50))
+	logger.Info("===================================================")
 	logger.Info("📙 PHASE 2: Tasks will fail once, then succeed on retry")
-	logger.Info("=" + strings.Repeat("=", 50))
+	logger.Info("===================================================")
 
 	// Reset counters
 	emailAttempts.Store(0)
@@ -195,7 +194,7 @@ func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logg
 			strego.WithMaxRetry(3),
 		)
 		info, _ := client.Enqueue(ctx, task)
-		logger.Info("📰 enqueued newsletter", "task_id", info.ID[:8])
+		logger.WithField("task_id", info.ID[:8]).Info("📰 enqueued newsletter")
 		time.Sleep(200 * time.Millisecond)
 	}
 
@@ -204,9 +203,9 @@ func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logg
 	time.Sleep(30 * time.Second)
 
 	// ========== PHASE 3: 2 Retries, Some Fail ==========
-	logger.Info("=" + strings.Repeat("=", 50))
+	logger.Info("===================================================")
 	logger.Info("📕 PHASE 3: Tasks will fail twice, some go to DLQ")
-	logger.Info("=" + strings.Repeat("=", 50))
+	logger.Info("===================================================")
 
 	// Reset counters
 	orderAttempts.Store(0)
@@ -220,7 +219,7 @@ func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logg
 			strego.WithMaxRetry(3),
 		)
 		info, _ := client.Enqueue(ctx, task)
-		logger.Info("🛒 enqueued order confirmation", "task_id", info.ID[:8])
+		logger.WithField("task_id", info.ID[:8]).Info("🛒 enqueued order confirmation")
 		time.Sleep(200 * time.Millisecond)
 	}
 
@@ -232,7 +231,7 @@ func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logg
 			strego.WithMaxRetry(2), // Will go to DLQ after 2 failures
 		)
 		info, _ := client.Enqueue(ctx, task)
-		logger.Info("🔔 enqueued notification (will fail!)", "task_id", info.ID[:8])
+		logger.WithField("task_id", info.ID[:8]).Info("🔔 enqueued notification (will fail!)")
 		time.Sleep(200 * time.Millisecond)
 	}
 
@@ -240,11 +239,11 @@ func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logg
 	logger.Info("⏳ waiting 30 seconds for Phase 3 retries and DLQ...")
 	time.Sleep(30 * time.Second)
 
-	logger.Info("=" + strings.Repeat("=", 50))
+	logger.Info("===================================================")
 	logger.Info("✅ ALL SCENARIOS COMPLETE")
 	logger.Info("📊 Check the dashboard at http://localhost:8080")
 	logger.Info("💀 Check Dead Letter Queue for failed notifications")
-	logger.Info("=" + strings.Repeat("=", 50))
+	logger.Info("===================================================")
 }
 
 // ============================================
@@ -253,9 +252,9 @@ func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logg
 
 // handleWelcomeEmail - Always succeeds
 func handleWelcomeEmail(ctx context.Context, task *strego.Task) error {
-	slog.Info("📧 sending welcome email", "task_id", task.ID()[:8])
+	logrus.WithField("task_id", task.ID()[:8]).Info("📧 sending welcome email")
 	time.Sleep(300 * time.Millisecond) // Simulate work
-	slog.Info("✅ welcome email sent", "task_id", task.ID()[:8])
+	logrus.WithField("task_id", task.ID()[:8]).Info("✅ welcome email sent")
 	return nil
 }
 
@@ -264,72 +263,67 @@ func handleNewsletterEmail(ctx context.Context, task *strego.Task) error {
 	attempt := emailAttempts.Add(1)
 	taskNum := (attempt-1)%5 + 1 // 1-5 for each task
 
-	slog.Info("📰 sending newsletter",
-		"task_id", task.ID()[:8],
-		"retry", task.RetryCount())
+	logrus.WithFields(logrus.Fields{
+		"task_id": task.ID()[:8],
+		"retry":   task.RetryCount(),
+	}).Info("📰 sending newsletter")
 
 	time.Sleep(300 * time.Millisecond)
 
 	// First attempt for each task fails
 	if task.RetryCount() == 0 {
-		slog.Warn("❌ newsletter failed (SMTP timeout)",
-			"task_id", task.ID()[:8],
-			"task_num", taskNum)
+		logrus.WithFields(logrus.Fields{
+			"task_id":  task.ID()[:8],
+			"task_num": taskNum,
+		}).Warn("❌ newsletter failed (SMTP timeout)")
 		return fmt.Errorf("SMTP connection timeout")
 	}
 
-	slog.Info("✅ newsletter sent on retry",
-		"task_id", task.ID()[:8],
-		"retry", task.RetryCount())
+	logrus.WithFields(logrus.Fields{
+		"task_id": task.ID()[:8],
+		"retry":   task.RetryCount(),
+	}).Info("✅ newsletter sent on retry")
 	return nil
 }
 
 // handleOrderConfirm - Fails twice, succeeds on 3rd attempt
 func handleOrderConfirm(ctx context.Context, task *strego.Task) error {
-	slog.Info("🛒 processing order",
-		"task_id", task.ID()[:8],
-		"retry", task.RetryCount())
+	logrus.WithFields(logrus.Fields{
+		"task_id": task.ID()[:8],
+		"retry":   task.RetryCount(),
+	}).Info("🛒 processing order")
 
 	time.Sleep(500 * time.Millisecond)
 
 	// Fail first 2 attempts
 	if task.RetryCount() < 2 {
-		slog.Warn("❌ order processing failed (payment gateway error)",
-			"task_id", task.ID()[:8],
-			"retry", task.RetryCount())
+		logrus.WithFields(logrus.Fields{
+			"task_id": task.ID()[:8],
+			"retry":   task.RetryCount(),
+		}).Warn("❌ order processing failed (payment gateway error)")
 		return fmt.Errorf("payment gateway timeout (attempt %d)", task.RetryCount()+1)
 	}
 
-	slog.Info("✅ order processed successfully",
-		"task_id", task.ID()[:8],
-		"retry", task.RetryCount())
+	logrus.WithFields(logrus.Fields{
+		"task_id": task.ID()[:8],
+		"retry":   task.RetryCount(),
+	}).Info("✅ order processed successfully")
 	return nil
 }
 
 // handleNotification - Always fails (will go to DLQ)
 func handleNotification(ctx context.Context, task *strego.Task) error {
-	slog.Info("🔔 pushing notification",
-		"task_id", task.ID()[:8],
-		"retry", task.RetryCount())
+	logrus.WithFields(logrus.Fields{
+		"task_id": task.ID()[:8],
+		"retry":   task.RetryCount(),
+	}).Info("🔔 pushing notification")
 
 	time.Sleep(200 * time.Millisecond)
 
 	// Always fail - these will go to DLQ
-	slog.Error("❌ notification failed (FCM unavailable)",
-		"task_id", task.ID()[:8],
-		"retry", task.RetryCount())
+	logrus.WithFields(logrus.Fields{
+		"task_id": task.ID()[:8],
+		"retry":   task.RetryCount(),
+	}).Error("❌ notification failed (FCM unavailable)")
 	return fmt.Errorf("FCM service unavailable")
-}
-
-// strings helper
-var strings = struct {
-	Repeat func(s string, count int) string
-}{
-	Repeat: func(s string, count int) string {
-		result := ""
-		for i := 0; i < count; i++ {
-			result += s
-		}
-		return result
-	},
 }

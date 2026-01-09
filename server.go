@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sirupsen/logrus"
+
 	"github.com/erennakbas/strego/broker"
 	"github.com/erennakbas/strego/types"
 )
@@ -162,10 +164,11 @@ func (s *Server) Start() error {
 	s.shutdown = make(chan struct{})
 	s.mu.Unlock()
 
-	s.logger.Info("starting strego server",
-		"worker_id", s.workerID,
-		"concurrency", s.concurrency,
-		"queues", s.queues)
+	s.logger.WithFields(logrus.Fields{
+		"worker_id":   s.workerID,
+		"concurrency": s.concurrency,
+		"queues":      s.queues,
+	}).Info("starting strego server")
 
 	// Create a context that's cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -188,10 +191,10 @@ func (s *Server) Start() error {
 	// Wait for shutdown signal or error
 	select {
 	case sig := <-sigCh:
-		s.logger.Info("received signal, shutting down", "signal", sig)
+		s.logger.WithField("signal", sig).Info("received signal, shutting down")
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, context.Canceled) {
-			s.logger.Error("broker subscription error", "error", err)
+			s.logger.WithError(err).Error("broker subscription error")
 			return err
 		}
 	case <-s.shutdown:
@@ -236,22 +239,22 @@ func (s *Server) Shutdown() {
 func (s *Server) processTask(ctx context.Context, proto *types.TaskProto) error {
 	task := TaskFromProto(proto)
 
-	s.logger.Debug("processing task",
-		"task_id", task.ID(),
-		"task_type", task.Type(),
-		"queue", task.Queue(),
-		"retry_count", task.RetryCount())
+	s.logger.WithFields(logrus.Fields{
+		"task_id":     task.ID(),
+		"task_type":   task.Type(),
+		"queue":       task.Queue(),
+		"retry_count": task.RetryCount(),
+	}).Debug("processing task")
 
 	// Check for idempotency (exactly-once processing)
 	// Only check on first attempt - retries should always be processed
 	if task.RetryCount() == 0 {
 		shouldProcess, err := s.broker.SetProcessed(ctx, task.ID(), s.processedTTL)
 		if err != nil {
-			s.logger.Error("idempotency check failed", "task_id", task.ID(), "error", err)
+			s.logger.WithField("task_id", task.ID()).WithError(err).Error("idempotency check failed")
 			// On error, still try to process (fail open)
 		} else if !shouldProcess {
-			s.logger.Debug("task already processed, skipping",
-				"task_id", task.ID())
+			s.logger.WithField("task_id", task.ID()).Debug("task already processed, skipping")
 			return nil // Already processed
 		}
 	}
@@ -264,16 +267,14 @@ func (s *Server) processTask(ctx context.Context, proto *types.TaskProto) error 
 
 	if s.store != nil {
 		if err := s.store.UpdateTask(ctx, proto); err != nil {
-			s.logger.Warn("failed to update task state in store",
-				"task_id", task.ID(), "error", err)
+			s.logger.WithField("task_id", task.ID()).WithError(err).Warn("failed to update task state in store")
 		}
 	}
 
 	// Find the handler
 	handler := s.mux.Handler(task.Type())
 	if handler == nil {
-		s.logger.Error("no handler registered for task type",
-			"task_type", task.Type())
+		s.logger.WithField("task_type", task.Type()).Error("no handler registered for task type")
 		// Move to DLQ as we can't process it
 		return s.handleFailure(ctx, task, fmt.Errorf("no handler for task type: %s", task.Type()))
 	}
@@ -292,19 +293,20 @@ func (s *Server) processTask(ctx context.Context, proto *types.TaskProto) error 
 	duration := time.Since(startTime)
 
 	if err != nil {
-		s.logger.Error("task processing failed",
-			"task_id", task.ID(),
-			"task_type", task.Type(),
-			"duration", duration,
-			"error", err)
+		s.logger.WithFields(logrus.Fields{
+			"task_id":   task.ID(),
+			"task_type": task.Type(),
+			"duration":  duration,
+		}).WithError(err).Error("task processing failed")
 		return s.handleFailure(ctx, task, err)
 	}
 
 	// Success
-	s.logger.Info("task processed successfully",
-		"task_id", task.ID(),
-		"task_type", task.Type(),
-		"duration", duration)
+	s.logger.WithFields(logrus.Fields{
+		"task_id":   task.ID(),
+		"task_type": task.Type(),
+		"duration":  duration,
+	}).Info("task processed successfully")
 
 	completedAt := time.Now()
 	proto.Metadata.State = types.TaskStateCompleted
@@ -312,8 +314,7 @@ func (s *Server) processTask(ctx context.Context, proto *types.TaskProto) error 
 
 	if s.store != nil {
 		if err := s.store.UpdateTask(ctx, proto); err != nil {
-			s.logger.Warn("failed to update completed task in store",
-				"task_id", task.ID(), "error", err)
+			s.logger.WithField("task_id", task.ID()).WithError(err).Warn("failed to update completed task in store")
 		}
 	}
 
@@ -340,13 +341,13 @@ func (s *Server) handleFailure(ctx context.Context, task *Task, taskErr error) e
 
 	if proto.Metadata.RetryCount >= maxRetry {
 		// Max retries exceeded, move to DLQ
-		s.logger.Warn("max retries exceeded, moving to DLQ",
-			"task_id", task.ID(),
-			"retry_count", proto.Metadata.RetryCount)
+		s.logger.WithFields(logrus.Fields{
+			"task_id":     task.ID(),
+			"retry_count": proto.Metadata.RetryCount,
+		}).Warn("max retries exceeded, moving to DLQ")
 
 		if err := s.broker.MoveToDLQ(ctx, queue, proto, taskErr); err != nil {
-			s.logger.Error("failed to move task to DLQ",
-				"task_id", task.ID(), "error", err)
+			s.logger.WithField("task_id", task.ID()).WithError(err).Error("failed to move task to DLQ")
 			return err
 		}
 
@@ -355,10 +356,9 @@ func (s *Server) handleFailure(ctx context.Context, task *Task, taskErr error) e
 			proto.Metadata.State = types.TaskStateDead
 			proto.Metadata.CompletedAt = &now
 			if err := s.store.UpdateTask(ctx, proto); err != nil {
-				s.logger.Warn("failed to update dead task in store",
-					"task_id", task.ID(), "error", err)
+				s.logger.WithField("task_id", task.ID()).WithError(err).Warn("failed to update dead task in store")
 			} else {
-				s.logger.Debug("updated dead task in store", "task_id", task.ID())
+				s.logger.WithField("task_id", task.ID()).Debug("updated dead task in store")
 			}
 		}
 
@@ -368,24 +368,26 @@ func (s *Server) handleFailure(ctx context.Context, task *Task, taskErr error) e
 	// Calculate exponential backoff
 	delay := s.calculateBackoff(int(proto.Metadata.RetryCount))
 
-	s.logger.Info("scheduling retry",
-		"task_id", task.ID(),
-		"retry_count", proto.Metadata.RetryCount,
-		"delay", delay)
+	s.logger.WithFields(logrus.Fields{
+		"task_id":     task.ID(),
+		"retry_count": proto.Metadata.RetryCount,
+		"delay":       delay,
+	}).Info("scheduling retry")
 
 	if err := s.broker.Retry(ctx, queue, proto, delay); err != nil {
-		s.logger.Error("failed to schedule retry",
-			"task_id", task.ID(), "error", err)
+		s.logger.WithField("task_id", task.ID()).WithError(err).Error("failed to schedule retry")
 		return err
 	}
 
 	if s.store != nil {
 		proto.Metadata.State = types.TaskStateRetry
 		if err := s.store.UpdateTask(ctx, proto); err != nil {
-			s.logger.Warn("failed to update retry task in store",
-				"task_id", task.ID(), "error", err)
+			s.logger.WithField("task_id", task.ID()).WithError(err).Warn("failed to update retry task in store")
 		} else {
-			s.logger.Debug("updated retry task in store", "task_id", task.ID(), "retry_count", proto.Metadata.RetryCount)
+			s.logger.WithFields(logrus.Fields{
+				"task_id":     task.ID(),
+				"retry_count": proto.Metadata.RetryCount,
+			}).Debug("updated retry task in store")
 		}
 	}
 
@@ -426,14 +428,13 @@ func (s *Server) runScheduler(ctx context.Context) {
 func (s *Server) processScheduled(ctx context.Context) {
 	tasks, err := s.broker.GetScheduled(ctx, time.Now(), 100)
 	if err != nil {
-		s.logger.Error("failed to get scheduled tasks", "error", err)
+		s.logger.WithError(err).Error("failed to get scheduled tasks")
 		return
 	}
 
 	for _, task := range tasks {
 		if err := s.broker.MoveToQueue(ctx, task); err != nil {
-			s.logger.Error("failed to move scheduled task to queue",
-				"task_id", task.ID, "error", err)
+			s.logger.WithField("task_id", task.ID).WithError(err).Error("failed to move scheduled task to queue")
 			continue
 		}
 
@@ -442,9 +443,10 @@ func (s *Server) processScheduled(ctx context.Context) {
 			queue = task.Options.Queue
 		}
 
-		s.logger.Debug("moved scheduled task to queue",
-			"task_id", task.ID,
-			"queue", queue)
+		s.logger.WithFields(logrus.Fields{
+			"task_id": task.ID,
+			"queue":   queue,
+		}).Debug("moved scheduled task to queue")
 	}
 }
 
@@ -452,18 +454,17 @@ func (s *Server) processScheduled(ctx context.Context) {
 func (s *Server) processRetries(ctx context.Context) {
 	tasks, err := s.broker.GetRetry(ctx, time.Now(), 100)
 	if err != nil {
-		s.logger.Error("failed to get retry tasks", "error", err)
+		s.logger.WithError(err).Error("failed to get retry tasks")
 		return
 	}
 
 	if len(tasks) > 0 {
-		s.logger.Info("processing retry tasks", "count", len(tasks))
+		s.logger.WithField("count", len(tasks)).Info("processing retry tasks")
 	}
 
 	for _, task := range tasks {
 		if err := s.broker.MoveToQueue(ctx, task); err != nil {
-			s.logger.Error("failed to move retry task to queue",
-				"task_id", task.ID, "error", err)
+			s.logger.WithField("task_id", task.ID).WithError(err).Error("failed to move retry task to queue")
 			continue
 		}
 
@@ -477,9 +478,10 @@ func (s *Server) processRetries(ctx context.Context) {
 			retryCount = task.Metadata.RetryCount
 		}
 
-		s.logger.Info("moved retry task to queue",
-			"task_id", task.ID,
-			"queue", queue,
-			"retry_count", retryCount)
+		s.logger.WithFields(logrus.Fields{
+			"task_id":     task.ID,
+			"queue":       queue,
+			"retry_count": retryCount,
+		}).Info("moved retry task to queue")
 	}
 }

@@ -103,9 +103,7 @@ func (c *Client) Enqueue(ctx context.Context, task *Task) (*types.TaskInfo, erro
 	// Save to store (sync, fail-safe)
 	if c.store != nil {
 		if err := c.store.CreateTask(ctx, proto); err != nil {
-			c.logger.Warn("failed to save task to store",
-				"task_id", proto.ID,
-				"error", err)
+			c.logger.WithField("task_id", proto.ID).WithError(err).Warn("failed to save task to store")
 			// Continue - Redis is primary
 		}
 	}

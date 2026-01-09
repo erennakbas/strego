@@ -4,14 +4,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
 
 	"github.com/erennakbas/strego"
 	"github.com/erennakbas/strego/broker"
@@ -21,11 +20,11 @@ import (
 
 func main() {
 	// Setup logger
-	slogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
-	slog.SetDefault(slogger)
-	logger := strego.NewSlogLogger(slogger)
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+	logger.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+	})
 
 	// Connect to Redis
 	redisClient := redis.NewClient(&redis.Options{
@@ -34,9 +33,9 @@ func main() {
 
 	ctx := context.Background()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Fatalf("failed to connect to redis: %v", err)
+		logger.WithError(err).Fatal("failed to connect to redis")
 	}
-	slogger.Info("connected to redis")
+	logger.Info("connected to redis")
 
 	// Create broker
 	b := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
@@ -67,13 +66,13 @@ func main() {
 		Logger: logger,
 	})
 	if err != nil {
-		log.Fatalf("failed to create UI server: %v", err)
+		logger.WithError(err).Fatal("failed to create UI server")
 	}
 
 	go func() {
-		slogger.Info("starting UI server", "addr", "http://localhost:8080")
+		logger.WithField("addr", "http://localhost:8080").Info("starting UI server")
 		if err := uiServer.Start(); err != nil {
-			slogger.Error("UI server error", "error", err)
+			logger.WithError(err).Error("UI server error")
 		}
 	}()
 
@@ -89,22 +88,23 @@ func main() {
 
 	go func() {
 		<-sigCh
-		slogger.Info("shutting down...")
+		logger.Info("shutting down...")
 		server.Shutdown()
 		uiServer.Shutdown(context.Background())
 	}()
 
 	// Start processing
-	slogger.Info("starting task processing...")
+	logger.Info("starting task processing...")
 	if err := server.Start(); err != nil {
-		log.Fatalf("server error: %v", err)
+		logger.WithError(err).Fatal("server error")
 	}
 }
 
 func handleSendEmail(ctx context.Context, task *strego.Task) error {
-	slog.Info("sending email",
-		"task_id", task.ID(),
-		"payload", string(task.Payload()))
+	logrus.WithFields(logrus.Fields{
+		"task_id": task.ID(),
+		"payload": string(task.Payload()),
+	}).Info("sending email")
 
 	// Simulate work
 	time.Sleep(100 * time.Millisecond)
@@ -114,35 +114,37 @@ func handleSendEmail(ctx context.Context, task *strego.Task) error {
 		return fmt.Errorf("failed to send email: SMTP connection refused")
 	}
 
-	slog.Info("email sent successfully", "task_id", task.ID())
+	logrus.WithField("task_id", task.ID()).Info("email sent successfully")
 	return nil
 }
 
 func handleGenerateReport(ctx context.Context, task *strego.Task) error {
-	slog.Info("generating report",
-		"task_id", task.ID(),
-		"payload", string(task.Payload()))
+	logrus.WithFields(logrus.Fields{
+		"task_id": task.ID(),
+		"payload": string(task.Payload()),
+	}).Info("generating report")
 
 	// Simulate longer work
 	time.Sleep(500 * time.Millisecond)
 
-	slog.Info("report generated", "task_id", task.ID())
+	logrus.WithField("task_id", task.ID()).Info("report generated")
 	return nil
 }
 
 func handlePushNotification(ctx context.Context, task *strego.Task) error {
-	slog.Info("pushing notification",
-		"task_id", task.ID(),
-		"payload", string(task.Payload()))
+	logrus.WithFields(logrus.Fields{
+		"task_id": task.ID(),
+		"payload": string(task.Payload()),
+	}).Info("pushing notification")
 
 	// Simulate work
 	time.Sleep(50 * time.Millisecond)
 
-	slog.Info("notification pushed", "task_id", task.ID())
+	logrus.WithField("task_id", task.ID()).Info("notification pushed")
 	return nil
 }
 
-func enqueueExampleTasks(ctx context.Context, client *strego.Client, logger strego.Logger) {
+func enqueueExampleTasks(ctx context.Context, client *strego.Client, logger *logrus.Logger) {
 	logger.Info("enqueuing example tasks...")
 
 	// Email tasks
@@ -155,10 +157,13 @@ func enqueueExampleTasks(ctx context.Context, client *strego.Client, logger stre
 
 		info, err := client.Enqueue(ctx, task)
 		if err != nil {
-			logger.Error("failed to enqueue", "error", err)
+			logger.WithError(err).Error("failed to enqueue")
 			continue
 		}
-		logger.Debug("enqueued", "task_id", info.ID, "queue", info.Queue)
+		logger.WithFields(logrus.Fields{
+			"task_id": info.ID,
+			"queue":   info.Queue,
+		}).Debug("enqueued")
 	}
 
 	// Critical tasks
@@ -182,10 +187,13 @@ func enqueueExampleTasks(ctx context.Context, client *strego.Client, logger stre
 
 		info, err := client.Enqueue(ctx, task)
 		if err != nil {
-			logger.Error("failed to schedule", "error", err)
+			logger.WithError(err).Error("failed to schedule")
 			continue
 		}
-		logger.Debug("scheduled", "task_id", info.ID, "process_at", info.ProcessAt)
+		logger.WithFields(logrus.Fields{
+			"task_id":    info.ID,
+			"process_at": info.ProcessAt,
+		}).Debug("scheduled")
 	}
 
 	logger.Info("example tasks enqueued")
