@@ -31,6 +31,42 @@ A task goes through several states during its lifecycle:
 ### Enqueue Flow
 <img width="797" height="846" alt="image" src="https://github.com/user-attachments/assets/38e9acef-a24c-4bd1-854c-3b1710c1107e" />
 
+alt Unique Key Set
+  Client -> Broker: SetUnique(key, taskID, TTL)
+  Broker -> Redis: SET NX unique:key
+  Redis --> Broker: OK/NX
+  alt Key Exists
+    Broker --> Client: ErrDuplicateTask
+    Client --> App: Error
+    deactivate Client
+  end
+end
+
+alt ProcessAt in Future
+  Client -> Broker: Schedule(task, processAt)
+  Broker -> Redis: ZADD scheduled (score=processAt)
+  Redis --> Broker: OK
+else Immediate
+  Client -> Broker: Publish(queue, task)
+  activate Broker
+  Broker -> Redis: Pipeline:\nXADD stream:queue\nSADD queues\nHINCRBY stats:queue
+  activate Redis
+  Redis --> Broker: OK (all commands)
+  deactivate Redis
+  deactivate Broker
+end
+
+opt PostgreSQL Store Configured
+  Client -> PG: INSERT task
+  PG --> Client: OK
+end
+
+Broker --> Client: Success
+Client --> App: TaskInfo
+deactivate Client
+
+@enduml
+```
 
 ### Processing Flow
 <img width="754" height="1279" alt="image" src="https://github.com/user-attachments/assets/5e099c3b-69b0-45bd-bd77-49f678649823" />
@@ -38,6 +74,50 @@ A task goes through several states during its lifecycle:
 ### Scheduler Flow
 <img width="674" height="812" alt="image" src="https://github.com/user-attachments/assets/07d1a86a-419c-41f8-9405-b9607c5b821c" />
 
+
+participant "Server" as Server
+participant "Scheduler" as Scheduler
+participant "Broker" as Broker
+database "Redis" as Redis
+
+loop Every 1 Second
+  Scheduler -> Broker: GetScheduled(until=now, limit=100)
+  Broker -> Redis: ZRANGEBYSCORE scheduled\n(-inf, now)
+  Redis --> Broker: Tasks
+  Broker -> Redis: ZPOPMIN scheduled
+  Redis --> Broker: Tasks (removed)
+  Broker --> Scheduler: Tasks
+  
+  loop For Each Task
+    Scheduler -> Broker: MoveToQueue(task)
+    activate Broker
+    Broker -> Redis: Pipeline:\nXADD stream:queue\nSADD queues\nHINCRBY stats:queue
+    activate Redis
+    Redis --> Broker: OK (all commands)
+    deactivate Redis
+    deactivate Broker
+  end
+  
+  Scheduler -> Broker: GetRetry(until=now, limit=100)
+  Broker -> Redis: ZRANGEBYSCORE retry\n(-inf, now)
+  Redis --> Broker: Tasks
+  Broker -> Redis: ZPOPMIN retry
+  Redis --> Broker: Tasks (removed)
+  Broker --> Scheduler: Tasks
+  
+  loop For Each Retry Task
+    Scheduler -> Broker: MoveToQueue(task)
+    activate Broker
+    Broker -> Redis: Pipeline:\nXADD stream:queue\nSADD queues\nHINCRBY stats:queue
+    activate Redis
+    Redis --> Broker: OK (all commands)
+    deactivate Redis
+    deactivate Broker
+  end
+end
+
+@enduml
+```
 
 ## Redis Data Structures
 
