@@ -33,142 +33,11 @@ A task goes through several states during its lifecycle:
 
 
 ### Processing Flow
-
-```plantuml
-@startuml Processing Flow
-!theme plain
-
-participant "Server" as Server
-participant "Broker" as Broker
-database "Redis" as Redis
-participant "Handler" as Handler
-database "PostgreSQL" as PG
-
-loop Consumer Loop
-  Server -> Broker: Subscribe(queues)
-  activate Broker
-  
-  Broker -> Redis: XReadGroup\n(Block 5s, Count 10)
-  activate Redis
-  Redis --> Broker: Messages
-  deactivate Redis
-  
-  Broker -> Server: processTask(task)
-  activate Server
-  
-  Server -> Broker: SetProcessed(taskID, TTL)
-  Broker -> Redis: SET NX processed:taskID
-  Redis --> Broker: OK/NX
-  
-  alt Already Processed
-    Server --> Broker: Skip (idempotency)
-  else New Task
-    Server -> PG: UPDATE state=active
-    activate PG
-    PG --> Server: OK
-    deactivate PG
-    
-    Server -> Handler: ProcessTask(ctx, task)
-    activate Handler
-    
-    alt Handler Succeeds
-      Handler --> Server: Success
-      deactivate Handler
-      
-      Server -> Broker: Ack(msgID)
-      Broker -> Redis: XACK + XDEL
-      activate Redis
-      Redis --> Broker: OK
-      deactivate Redis
-      
-      Server -> PG: UPDATE state=completed
-      activate PG
-      PG --> Server: OK
-      deactivate PG
-      
-    else Handler Fails
-      Handler --> Server: Error
-      deactivate Handler
-      
-      Server -> Server: handleFailure()
-      
-      alt Retry Count < Max
-        Server -> Broker: Retry(queue, task, delay)
-        Broker -> Redis: ZADD retry\n(score=now+delay)
-        activate Redis
-        Redis --> Broker: OK
-        deactivate Redis
-        
-        Server -> PG: UPDATE state=retry
-        activate PG
-        PG --> Server: OK
-        deactivate PG
-        
-      else Retry Count >= Max
-        Server -> Broker: MoveToDLQ(queue, task)
-        Broker -> Redis: XADD dlq:queue
-        Broker -> Redis: XACK original
-        activate Redis
-        Redis --> Broker: OK
-        deactivate Redis
-        
-        Server -> PG: UPDATE state=dead
-        activate PG
-        PG --> Server: OK
-        deactivate PG
-      end
-    end
-  end
-  
-  Server --> Broker: Done
-  deactivate Server
-  deactivate Broker
-end
-
-@enduml
-```
+<img width="754" height="1279" alt="image" src="https://github.com/user-attachments/assets/5e099c3b-69b0-45bd-bd77-49f678649823" />
 
 ### Scheduler Flow
+<img width="674" height="812" alt="image" src="https://github.com/user-attachments/assets/07d1a86a-419c-41f8-9405-b9607c5b821c" />
 
-```plantuml
-@startuml Scheduler Flow
-!theme plain
-
-participant "Server" as Server
-participant "Scheduler" as Scheduler
-participant "Broker" as Broker
-database "Redis" as Redis
-
-loop Every 1 Second
-  Scheduler -> Broker: GetScheduled(until=now, limit=100)
-  Broker -> Redis: ZRANGEBYSCORE scheduled\n(-inf, now)
-  Redis --> Broker: Tasks
-  Broker -> Redis: ZPOPMIN scheduled
-  Redis --> Broker: Tasks (removed)
-  Broker --> Scheduler: Tasks
-  
-  loop For Each Task
-    Scheduler -> Broker: MoveToQueue(task)
-    Broker -> Redis: XADD stream:queue
-    Redis --> Broker: OK
-  end
-  
-  Scheduler -> Broker: GetRetry(until=now, limit=100)
-  Broker -> Redis: ZRANGEBYSCORE retry\n(-inf, now)
-  Redis --> Broker: Tasks
-  Broker -> Redis: ZPOPMIN retry
-  Redis --> Broker: Tasks (removed)
-  Broker --> Scheduler: Tasks
-  
-  loop For Each Retry Task
-    Scheduler -> Broker: MoveToQueue(task)
-    Broker -> Redis: XADD stream:queue
-    Redis --> Broker: OK
-  end
-end
-
-@enduml
-```
 
 ## Redis Data Structures
 
@@ -218,80 +87,12 @@ package "Redis Keys" {
 
 ### Horizontal Scaling
 
-```plantuml
-@startuml Horizontal Scaling
-!theme plain
-
-cloud "Redis Streams" as Redis {
-  component "strego:stream:email" as EmailQueue
-  component "strego:stream:notification" as NotifQueue
-}
-
-node "Worker 1" as W1 {
-  component [Server] as S1
-  component "Consumer Group: strego-workers" as CG1
-}
-
-node "Worker 2" as W2 {
-  component [Server] as S2
-  component "Consumer Group: strego-workers" as CG2
-}
-
-node "Worker 3" as W3 {
-  component [Server] as S3
-  component "Consumer Group: strego-workers" as CG3
-}
-
-W1 --> Redis : XReadGroup
-W2 --> Redis : XReadGroup
-W3 --> Redis : XReadGroup
-
-Redis --> W1 : Message 1
-Redis --> W2 : Message 2
-Redis --> W3 : Message 3
-
-note right of Redis
-  Redis Streams Consumer Groups
-  automatically distribute messages
-  across workers in the same group
-end note
-
-@enduml
-```
+<img width="1539" height="338" alt="image" src="https://github.com/user-attachments/assets/75dd3d8f-26b4-4fac-a1aa-583a855fb3aa" />
 
 ### Queue Isolation
 
-```plantuml
-@startuml Queue Isolation
-!theme plain
+<img width="1023" height="260" alt="image" src="https://github.com/user-attachments/assets/1714c07d-2239-48db-a874-d8b47d9832e3" />
 
-package "Multiple Queues" {
-  component "strego:stream:email" as Email
-  component "strego:stream:payment" as Payment
-  component "strego:stream:analytics" as Analytics
-  component "strego:stream:report" as Report
-  component "..." as More
-}
-
-component "Server" as Server {
-  component "Single XReadGroup Call" as Read
-}
-
-Server --> Email
-Server --> Payment
-Server --> Analytics
-Server --> Report
-Server --> More
-
-note right of Server
-  All queues consumed in
-  a single efficient Redis call
-  Minimal overhead per queue
-  (~1-2KB when empty)
-end note
-
-@enduml
-```
 
 ## Key Design Decisions
 
