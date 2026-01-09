@@ -35,95 +35,12 @@ A task goes through several states during its lifecycle:
 <img width="754" height="1279" alt="image" src="https://github.com/user-attachments/assets/5e099c3b-69b0-45bd-bd77-49f678649823" />
 
 ### Scheduler Flow
-<img width="674" height="812" alt="image" src="https://github.com/user-attachments/assets/07d1a86a-419c-41f8-9405-b9607c5b821c" />
-
-
-participant "Server" as Server
-participant "Scheduler" as Scheduler
-participant "Broker" as Broker
-database "Redis" as Redis
-
-loop Every 1 Second
-  Scheduler -> Broker: GetScheduled(until=now, limit=100)
-  Broker -> Redis: ZRANGEBYSCORE scheduled\n(-inf, now)
-  Redis --> Broker: Tasks
-  Broker -> Redis: ZPOPMIN scheduled
-  Redis --> Broker: Tasks (removed)
-  Broker --> Scheduler: Tasks
-  
-  loop For Each Task
-    Scheduler -> Broker: MoveToQueue(task)
-    activate Broker
-    Broker -> Redis: Pipeline:\nXADD stream:queue\nSADD queues\nHINCRBY stats:queue
-    activate Redis
-    Redis --> Broker: OK (all commands)
-    deactivate Redis
-    deactivate Broker
-  end
-  
-  Scheduler -> Broker: GetRetry(until=now, limit=100)
-  Broker -> Redis: ZRANGEBYSCORE retry\n(-inf, now)
-  Redis --> Broker: Tasks
-  Broker -> Redis: ZPOPMIN retry
-  Redis --> Broker: Tasks (removed)
-  Broker --> Scheduler: Tasks
-  
-  loop For Each Retry Task
-    Scheduler -> Broker: MoveToQueue(task)
-    activate Broker
-    Broker -> Redis: Pipeline:\nXADD stream:queue\nSADD queues\nHINCRBY stats:queue
-    activate Redis
-    Redis --> Broker: OK (all commands)
-    deactivate Redis
-    deactivate Broker
-  end
-end
-
-@enduml
-```
+<img width="639" height="903" alt="image" src="https://github.com/user-attachments/assets/d3ae3c9e-bd57-40b6-98b8-96dadaaa0a1a" />
 
 ## Redis Data Structures
 
 ```plantuml
-@startuml Redis Data Structures
-!theme plain
-skinparam componentStyle rectangle
 
-package "Redis Keys" {
-  component "strego:stream:{queue}" as Stream {
-    note right: Redis Stream\nXADD, XREADGROUP
-  }
-  
-  component "strego:dlq:{queue}" as DLQ {
-    note right: Redis Stream\nDead Letter Queue
-  }
-  
-  component "strego:scheduled" as Scheduled {
-    note right: Sorted Set (ZSET)\nScore = Unix Timestamp
-  }
-  
-  component "strego:retry" as Retry {
-    note right: Sorted Set (ZSET)\nScore = Retry Time
-  }
-  
-  component "strego:processed:{task_id}" as Processed {
-    note right: String with TTL\nIdempotency Check
-  }
-  
-  component "strego:unique:{key}" as Unique {
-    note right: String with TTL\nDeduplication
-  }
-  
-  component "strego:stats:{queue}" as Stats {
-    note right: Hash\nQueue Statistics
-  }
-  
-  component "strego:queues" as Queues {
-    note right: Set\nAll Queue Names
-  }
-}
-
-@enduml
 ```
 
 ## Scaling & Performance
