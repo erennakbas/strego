@@ -287,9 +287,22 @@ func (s *Server) processTask(ctx context.Context, proto *types.TaskProto) error 
 		defer taskCancel()
 	}
 
-	// Execute the handler
+	// Execute the handler with panic recovery
 	startTime := time.Now()
-	err := handler.ProcessTask(taskCtx, task)
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic: %v", r)
+				s.logger.WithFields(logrus.Fields{
+					"task_id":   task.ID(),
+					"task_type": task.Type(),
+					"panic":     r,
+				}).Error("handler panicked")
+			}
+		}()
+		err = handler.ProcessTask(taskCtx, task)
+	}()
 	duration := time.Since(startTime)
 
 	if err != nil {
