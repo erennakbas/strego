@@ -294,10 +294,27 @@ func (b *Broker) Schedule(ctx context.Context, task *types.TaskProto, processAt 
 		return fmt.Errorf("failed to marshal task: %w", err)
 	}
 
-	return b.client.ZAdd(ctx, scheduledKey, redis.Z{
+	queue := "default"
+	if task.Options != nil && task.Options.Queue != "" {
+		queue = task.Options.Queue
+	}
+
+	pipe := b.client.Pipeline()
+
+	// Add to scheduled sorted set
+	pipe.ZAdd(ctx, scheduledKey, redis.Z{
 		Score:  float64(processAt.Unix()),
 		Member: string(data),
-	}).Err()
+	})
+
+	// Track queue in set (so it appears in GetQueues)
+	pipe.SAdd(ctx, queuesKey, queue)
+
+	// Increment scheduled counter
+	pipe.HIncrBy(ctx, statsPrefix+queue, "scheduled", 1)
+
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // GetScheduled retrieves and REMOVES tasks that are ready to be processed
@@ -364,12 +381,24 @@ func (b *Broker) MoveToQueue(ctx context.Context, task *types.TaskProto) error {
 		return err
 	}
 
-	return b.client.XAdd(ctx, &redis.XAddArgs{
+	pipe := b.client.Pipeline()
+
+	// Add to stream
+	pipe.XAdd(ctx, &redis.XAddArgs{
 		Stream: b.streamKey(queue),
 		Values: map[string]interface{}{
 			"data": string(data),
 		},
-	}).Err()
+	})
+
+	// Track queue in set
+	pipe.SAdd(ctx, queuesKey, queue)
+
+	// Increment enqueued counter
+	pipe.HIncrBy(ctx, statsPrefix+queue, "enqueued", 1)
+
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // Retry schedules a task for retry with backoff
