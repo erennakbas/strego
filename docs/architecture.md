@@ -29,44 +29,7 @@ A task goes through several states during its lifecycle:
 <img width="924" height="536" alt="image" src="https://github.com/user-attachments/assets/1a53994e-2820-48ee-b8ce-fba512694cdc" />
 
 ### Enqueue Flow
-<img width="797" height="846" alt="image" src="https://github.com/user-attachments/assets/38e9acef-a24c-4bd1-854c-3b1710c1107e" />
-
-alt Unique Key Set
-  Client -> Broker: SetUnique(key, taskID, TTL)
-  Broker -> Redis: SET NX unique:key
-  Redis --> Broker: OK/NX
-  alt Key Exists
-    Broker --> Client: ErrDuplicateTask
-    Client --> App: Error
-    deactivate Client
-  end
-end
-
-alt ProcessAt in Future
-  Client -> Broker: Schedule(task, processAt)
-  Broker -> Redis: ZADD scheduled (score=processAt)
-  Redis --> Broker: OK
-else Immediate
-  Client -> Broker: Publish(queue, task)
-  activate Broker
-  Broker -> Redis: Pipeline:\nXADD stream:queue\nSADD queues\nHINCRBY stats:queue
-  activate Redis
-  Redis --> Broker: OK (all commands)
-  deactivate Redis
-  deactivate Broker
-end
-
-opt PostgreSQL Store Configured
-  Client -> PG: INSERT task
-  PG --> Client: OK
-end
-
-Broker --> Client: Success
-Client --> App: TaskInfo
-deactivate Client
-
-@enduml
-```
+<img width="720" height="712" alt="image" src="https://github.com/user-attachments/assets/99238d33-3a78-485f-bc77-26da4a4a7989" />
 
 ### Processing Flow
 <img width="754" height="1279" alt="image" src="https://github.com/user-attachments/assets/5e099c3b-69b0-45bd-bd77-49f678649823" />
