@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/erennakbas/strego/pkg/types"
+	"github.com/erennakbas/strego/types"
 )
 
 // Broker defines the interface for task queue operations.

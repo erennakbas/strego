@@ -12,8 +12,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/erennakbas/strego/pkg/broker"
-	"github.com/erennakbas/strego/pkg/types"
+	"github.com/erennakbas/strego/broker"
+	"github.com/erennakbas/strego/types"
 )
 
 const (

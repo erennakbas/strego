@@ -13,19 +13,20 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/erennakbas/strego/pkg/broker"
-	brokerRedis "github.com/erennakbas/strego/pkg/broker/redis"
-	"github.com/erennakbas/strego/pkg/store/postgres"
-	"github.com/erennakbas/strego/pkg/strego"
-	"github.com/erennakbas/strego/pkg/ui"
+	"github.com/erennakbas/strego"
+	"github.com/erennakbas/strego/broker"
+	brokerRedis "github.com/erennakbas/strego/broker/redis"
+	"github.com/erennakbas/strego/store/postgres"
+	"github.com/erennakbas/strego/ui"
 )
 
 func main() {
 	// Setup logger
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	slogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
-	slog.SetDefault(logger)
+	slog.SetDefault(slogger)
+	logger := strego.NewSlogLogger(slogger)
 
 	ctx := context.Background()
 
@@ -39,7 +40,7 @@ func main() {
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		log.Fatalf("failed to connect to redis: %v", err)
 	}
-	logger.Info("connected to redis", "addr", "localhost:6379")
+	slogger.Info("connected to redis", "addr", "localhost:6379")
 
 	// ============================================
 	// Connect to PostgreSQL (optional - for UI/history)
@@ -54,7 +55,7 @@ func main() {
 		log.Fatalf("failed to connect to postgresql: %v", err)
 	}
 	defer pgStore.Close()
-	logger.Info("connected to postgresql", "addr", "localhost:5432")
+	slogger.Info("connected to postgresql", "addr", "localhost:5432")
 
 	// ============================================
 	// Create Broker (Redis Streams)
@@ -71,7 +72,7 @@ func main() {
 	// ============================================
 	client := strego.NewClient(b,
 		strego.WithStore(pgStore),
-		strego.WithLogger(logger),
+		strego.WithClientLogger(logger),
 	)
 
 	// ============================================
@@ -125,9 +126,9 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("starting UI server", "url", "http://localhost:8080")
+		slogger.Info("starting UI server", "url", "http://localhost:8080")
 		if err := uiServer.Start(); err != nil {
-			logger.Error("UI server error", "error", err)
+			slogger.Error("UI server error", "error", err)
 		}
 	}()
 
@@ -147,7 +148,7 @@ func main() {
 
 	go func() {
 		<-sigCh
-		logger.Info("shutting down gracefully...")
+		slogger.Info("shutting down gracefully...")
 		server.Shutdown()
 		uiServer.Shutdown(context.Background())
 	}()
@@ -155,15 +156,15 @@ func main() {
 	// ============================================
 	// Start Task Processing (blocking)
 	// ============================================
-	logger.Info("starting task processing...")
+	slogger.Info("starting task processing...")
 	if err := server.Start(); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 
-	logger.Info("shutdown complete")
+	slogger.Info("shutdown complete")
 }
 
-func enqueueExampleTasks(ctx context.Context, client *strego.Client, logger *slog.Logger) {
+func enqueueExampleTasks(ctx context.Context, client *strego.Client, logger strego.Logger) {
 	logger.Info("enqueuing example tasks...")
 
 	// Emails

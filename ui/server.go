@@ -8,14 +8,14 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/erennakbas/strego/pkg/broker"
-	"github.com/erennakbas/strego/pkg/store"
+	"github.com/erennakbas/strego/broker"
+	"github.com/erennakbas/strego/store"
+	"github.com/erennakbas/strego/types"
 )
 
 //go:embed templates/*.html
@@ -28,7 +28,7 @@ var staticFS embed.FS
 type Server struct {
 	broker broker.Broker
 	store  store.Store
-	logger *slog.Logger
+	logger types.Logger
 	tmpl   *template.Template
 	server *http.Server
 }
@@ -38,13 +38,13 @@ type Config struct {
 	Addr   string
 	Broker broker.Broker
 	Store  store.Store
-	Logger *slog.Logger
+	Logger types.Logger
 }
 
 // NewServer creates a new UI server.
 func NewServer(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
+		cfg.Logger = types.DefaultLogger()
 	}
 
 	// Parse templates

@@ -12,8 +12,8 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/erennakbas/strego/pkg/store"
-	"github.com/erennakbas/strego/pkg/types"
+	"github.com/erennakbas/strego/store"
+	"github.com/erennakbas/strego/types"
 )
 
 // ErrTaskNotFound is returned when a task is not found.

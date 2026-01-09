@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/erennakbas/strego/pkg/types"
+	"github.com/erennakbas/strego/types"
 )
 
 // Re-export types for convenience

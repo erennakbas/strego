@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"os"
 	"os/signal"
@@ -12,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/erennakbas/strego/pkg/broker"
-	"github.com/erennakbas/strego/pkg/types"
+	"github.com/erennakbas/strego/broker"
+	"github.com/erennakbas/strego/types"
 )
 
 // Default configuration values
@@ -39,7 +38,7 @@ type Server struct {
 	broker   broker.Broker
 	store    Store
 	mux      *ServeMux
-	logger   *slog.Logger
+	logger   Logger
 	workerID string
 
 	// Configuration
@@ -85,8 +84,8 @@ func WithServerStore(store Store) ServerOption {
 	}
 }
 
-// WithServerLogger sets the logger.
-func WithServerLogger(logger *slog.Logger) ServerOption {
+// WithServerLogger sets the logger for the server.
+func WithServerLogger(logger Logger) ServerOption {
 	return func(s *Server) {
 		s.logger = logger
 	}
@@ -122,7 +121,7 @@ func NewServer(b broker.Broker, opts ...ServerOption) *Server {
 	s := &Server{
 		broker:            b,
 		mux:               NewServeMux(),
-		logger:            slog.Default(),
+		logger:            defaultLogger(),
 		workerID:          workerID,
 		concurrency:       DefaultConcurrency,
 		queues:            []string{"default"},

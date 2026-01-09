@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
-	"github.com/erennakbas/strego/pkg/broker"
-	"github.com/erennakbas/strego/pkg/types"
+	"github.com/erennakbas/strego/broker"
+	"github.com/erennakbas/strego/types"
 )
 
 // ErrDuplicateTask is returned when a unique task already exists.
@@ -18,7 +17,7 @@ var ErrDuplicateTask = errors.New("duplicate task: unique key already exists")
 type Client struct {
 	broker broker.Broker
 	store  Store
-	logger *slog.Logger
+	logger Logger
 }
 
 // ClientOption configures the client.
@@ -31,8 +30,8 @@ func WithStore(store Store) ClientOption {
 	}
 }
 
-// WithLogger sets the logger.
-func WithLogger(logger *slog.Logger) ClientOption {
+// WithClientLogger sets the logger for the client.
+func WithClientLogger(logger Logger) ClientOption {
 	return func(c *Client) {
 		c.logger = logger
 	}
@@ -42,7 +41,7 @@ func WithLogger(logger *slog.Logger) ClientOption {
 func NewClient(b broker.Broker, opts ...ClientOption) *Client {
 	c := &Client{
 		broker: b,
-		logger: slog.Default(),
+		logger: defaultLogger(),
 	}
 
 	for _, opt := range opts {

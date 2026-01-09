@@ -3,8 +3,53 @@ package types
 
 import (
 	"encoding/json"
+	"log/slog"
 	"time"
 )
+
+// Logger is the interface for logging in strego.
+// It's compatible with both slog and logrus.
+type Logger interface {
+	Debug(msg string, args ...any)
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+	Error(msg string, args ...any)
+}
+
+// SlogLogger wraps slog.Logger to implement Logger interface.
+type SlogLogger struct {
+	*slog.Logger
+}
+
+// NewSlogLogger creates a new SlogLogger from slog.Logger.
+func NewSlogLogger(l *slog.Logger) *SlogLogger {
+	return &SlogLogger{Logger: l}
+}
+
+// Debug logs at debug level.
+func (l *SlogLogger) Debug(msg string, args ...any) {
+	l.Logger.Debug(msg, args...)
+}
+
+// Info logs at info level.
+func (l *SlogLogger) Info(msg string, args ...any) {
+	l.Logger.Info(msg, args...)
+}
+
+// Warn logs at warn level.
+func (l *SlogLogger) Warn(msg string, args ...any) {
+	l.Logger.Warn(msg, args...)
+}
+
+// Error logs at error level.
+func (l *SlogLogger) Error(msg string, args ...any) {
+	l.Logger.Error(msg, args...)
+}
+
+// DefaultLogger returns the default slog-based logger.
+func DefaultLogger() Logger {
+	return NewSlogLogger(slog.Default())
+}
 
 // TaskState represents the current state of a task.
 type TaskState string

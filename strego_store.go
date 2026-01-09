@@ -3,7 +3,7 @@ package strego
 import (
 	"context"
 
-	"github.com/erennakbas/strego/pkg/types"
+	"github.com/erennakbas/strego/types"
 )
 
 // Store defines the interface for task persistence.

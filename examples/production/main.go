@@ -14,11 +14,11 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/erennakbas/strego/pkg/broker"
-	brokerRedis "github.com/erennakbas/strego/pkg/broker/redis"
-	"github.com/erennakbas/strego/pkg/store/postgres"
-	"github.com/erennakbas/strego/pkg/strego"
-	"github.com/erennakbas/strego/pkg/ui"
+	"github.com/erennakbas/strego"
+	"github.com/erennakbas/strego/broker"
+	brokerRedis "github.com/erennakbas/strego/broker/redis"
+	"github.com/erennakbas/strego/store/postgres"
+	"github.com/erennakbas/strego/ui"
 )
 
 // Failure simulation counters
@@ -30,10 +30,11 @@ var (
 
 func main() {
 	// Setup logger
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	slogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
-	slog.SetDefault(logger)
+	slog.SetDefault(slogger)
+	logger := strego.NewSlogLogger(slogger)
 
 	ctx := context.Background()
 
@@ -47,7 +48,7 @@ func main() {
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		log.Fatalf("failed to connect to redis: %v", err)
 	}
-	logger.Info("✅ connected to redis")
+	slogger.Info("✅ connected to redis")
 
 	// ============================================
 	// Connect to PostgreSQL
@@ -62,7 +63,7 @@ func main() {
 		log.Fatalf("failed to connect to postgresql: %v", err)
 	}
 	defer pgStore.Close()
-	logger.Info("✅ connected to postgresql")
+	slogger.Info("✅ connected to postgresql")
 
 	// ============================================
 	// Create Broker
@@ -79,7 +80,7 @@ func main() {
 	// ============================================
 	client := strego.NewClient(b,
 		strego.WithStore(pgStore),
-		strego.WithLogger(logger),
+		strego.WithClientLogger(logger),
 	)
 
 	// ============================================
@@ -117,9 +118,9 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("🌐 UI ready at http://localhost:8080")
+		slogger.Info("🌐 UI ready at http://localhost:8080")
 		if err := uiServer.Start(); err != nil {
-			logger.Error("UI server error", "error", err)
+			slogger.Error("UI server error", "error", err)
 		}
 	}()
 
@@ -136,7 +137,7 @@ func main() {
 
 	go func() {
 		<-sigCh
-		logger.Info("🛑 shutting down...")
+		slogger.Info("🛑 shutting down...")
 		server.Shutdown()
 		uiServer.Shutdown(context.Background())
 	}()
@@ -144,7 +145,7 @@ func main() {
 	// ============================================
 	// Start Processing
 	// ============================================
-	logger.Info("🚀 starting task processing...")
+	slogger.Info("🚀 starting task processing...")
 	if err := server.Start(); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
@@ -154,7 +155,7 @@ func main() {
 // SCENARIOS
 // ============================================
 
-func runScenarios(ctx context.Context, client *strego.Client, logger *slog.Logger) {
+func runScenarios(ctx context.Context, client *strego.Client, logger strego.Logger) {
 	time.Sleep(2 * time.Second)
 
 	// ========== PHASE 1: All Success ==========
