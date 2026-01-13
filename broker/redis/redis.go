@@ -642,7 +642,7 @@ func (b *Broker) GetQueueInfo(ctx context.Context, queue string) (*types.QueueIn
 	stats, err := b.client.HGetAll(ctx, statsPrefix+queue).Result()
 	if err == nil {
 		if v, ok := stats["completed"]; ok {
-			fmt.Sscanf(v, "%d", &info.Completed)
+			_, _ = fmt.Sscanf(v, "%d", &info.Completed)
 		}
 	}
 

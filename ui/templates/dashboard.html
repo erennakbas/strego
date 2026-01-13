@@ -17,48 +17,43 @@
                 </span>
             </p>
         </div>
-        <div class="flex items-center gap-4">
-            <!-- Consumer Group Selector -->
-            {{if .ConsumerGroups}}
-            <div class="flex items-center gap-3">
-                <label class="text-sm text-gray-400">Consumer Group:</label>
-                <select 
-                    onchange="window.location.href = '/?group=' + this.value"
-                    class="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-strego-500"
-                >
-                    {{range .ConsumerGroups}}
-                    <option value="{{.Name}}" {{if eq $.SelectedGroup .Name}}selected{{end}}>
-                        {{.Name}} ({{.ConsumerCount}} workers)
-                    </option>
-                    {{end}}
-                </select>
-            </div>
-            {{else}}
-            <div class="text-sm text-gray-500 px-4 py-2 bg-gray-800/50 rounded-lg">
-                No active consumer groups
-            </div>
-            {{end}}
+        <div class="flex items-center gap-3">
         <div class="flex items-center gap-3 text-sm" id="refresh-controls"
              x-data="{ 
                 lastUpdated: new Date(),
                 isPaused: false,
+                isTabVisible: true,
                 toggleAutoRefresh() {
                     this.isPaused = !this.isPaused;
-                    if (this.isPaused) {
-                        document.getElementById('stats')?.setAttribute('hx-trigger', 'manualRefresh');
-                        document.getElementById('queues-content')?.setAttribute('hx-trigger', 'manualRefresh');
-                        document.getElementById('consumers-content')?.setAttribute('hx-trigger', 'manualRefresh');
-                    } else {
-                        document.getElementById('stats')?.setAttribute('hx-trigger', 'load, every 30s, manualRefresh');
-                        document.getElementById('queues-content')?.setAttribute('hx-trigger', 'load, every 30s, manualRefresh');
-                        document.getElementById('consumers-content')?.setAttribute('hx-trigger', 'load, every 30s, manualRefresh');
-                    }
+                    this.updateTriggers();
+                },
+                updateTriggers() {
+                    // Auto-refresh only if not paused AND tab is visible
+                    const shouldAutoRefresh = !this.isPaused && this.isTabVisible;
+                    const trigger = shouldAutoRefresh ? 'load, every 30s, manualRefresh' : 'manualRefresh';
+                    
+                    document.getElementById('stats')?.setAttribute('hx-trigger', trigger);
+                    document.getElementById('queues-content')?.setAttribute('hx-trigger', trigger);
+                    document.getElementById('consumers-content')?.setAttribute('hx-trigger', trigger);
                     htmx.process(document.body);
                 },
                 init() {
                     window.updateDashboardTime = () => {
                         this.lastUpdated = new Date();
                     };
+                    
+                    // Tab visibility listener - pause auto-refresh when tab is hidden
+                    document.addEventListener('visibilitychange', () => {
+                        this.isTabVisible = !document.hidden;
+                        this.updateTriggers();
+                        
+                        // When tab becomes visible again, refresh immediately
+                        if (this.isTabVisible && !this.isPaused) {
+                            htmx.trigger('#stats', 'manualRefresh');
+                            htmx.trigger('#queues-content', 'manualRefresh');
+                            htmx.trigger('#consumers-content', 'manualRefresh');
+                        }
+                    });
                 }
              }">
             <!-- Auto-refresh indicator -->
@@ -173,16 +168,57 @@
     </div>
     {{end}}
 
+    <!-- Redis Streams Section (Real-time Data) -->
+    <div class="bg-gradient-to-br from-gray-900 to-gray-900/50 rounded-xl border-2 border-red-900/30 overflow-hidden">
+        <!-- Redis Section Header with Consumer Group Selector -->
+        <div class="bg-gradient-to-r from-red-900/20 via-red-800/10 to-red-900/20 border-b border-red-900/30 p-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xl">🔴</span>
+                        <h3 class="text-lg font-bold">Real-time Data</h3>
+                    </div>
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs bg-red-900/40 text-red-300 border border-red-800/50 font-medium">
+                        <span class="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
+                        Redis Streams
+                    </span>
+                </div>
+                
+                <!-- Consumer Group Selector -->
+                {{if .ConsumerGroups}}
+                <div class="flex items-center gap-3">
+                    <label class="text-sm text-gray-400 font-medium">Filter by Consumer Group:</label>
+                    <select 
+                        onchange="window.location.href = '/?group=' + this.value"
+                        class="bg-gray-800 border border-red-800/50 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500/50 hover:border-red-700/50 transition-colors"
+                    >
+                        {{range .ConsumerGroups}}
+                        <option value="{{.Name}}" {{if eq $.SelectedGroup .Name}}selected{{end}}>
+                            {{.Name}} ({{.ConsumerCount}} workers)
+                        </option>
+                        {{end}}
+                    </select>
+                </div>
+                {{else}}
+                <div class="text-sm text-gray-500 px-3 py-1.5 bg-gray-800/50 rounded-lg border border-gray-700">
+                    No active consumer groups
+                </div>
+                {{end}}
+            </div>
+            {{if .SelectedGroup}}
+            <p class="text-xs text-gray-500 mt-2 ml-8">Showing workers and queues for <span class="text-red-400 font-medium">{{.SelectedGroup}}</span></p>
+            {{end}}
+        </div>
+
+        <!-- Redis Section Content -->
+        <div class="p-4 space-y-4">
+
     <!-- Workers in Consumer Group (Redis) -->
     {{if .Consumers}}
-    <div class="bg-gray-900 rounded-xl border border-gray-800" x-data="{ expanded: true }">
-        <div class="p-4 border-b border-gray-800 flex items-center justify-between cursor-pointer" @click="expanded = !expanded">
+    <div class="bg-gray-800/50 rounded-lg border border-gray-700/50" x-data="{ expanded: true }">
+        <div class="p-3.5 border-b border-gray-700/50 flex items-center justify-between cursor-pointer" @click="expanded = !expanded">
             <div class="flex items-center gap-3">
-                <h3 class="font-semibold">👥 Workers in Consumer Group</h3>
-                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-red-900/30 text-red-400 border border-red-800/50">
-                    <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
-                    Real-time • Redis Streams
-                </span>
+                <h4 class="font-semibold text-base">👥 Active Workers</h4>
                 <div class="relative inline-flex items-center group" @click.stop="">
                     <svg class="w-4 h-4 text-gray-500 hover:text-gray-300 cursor-help" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -332,7 +368,7 @@
                 </svg>
             </div>
         </div>
-        <div class="p-4 space-y-2" x-show="expanded" x-transition>
+        <div class="p-3 space-y-2" x-show="expanded" x-transition>
             <div id="consumers-content" 
                  class="space-y-2" 
                  hx-get="/partials/consumers?group={{.SelectedGroup}}" 
@@ -341,7 +377,7 @@
                  hx-indicator="#refresh-indicator">
             {{if .Consumers}}
                 {{range .Consumers}}
-                <div class="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800/70 transition-colors">
+                <div class="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg hover:bg-gray-900/70 transition-colors border border-gray-700/30">
                     <div class="flex items-center gap-3 flex-1">
                         <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs {{.StatusClass}} font-medium">
                             {{.Status}}
@@ -373,10 +409,10 @@
     {{end}}
 
     <!-- Queues Overview (Redis) -->
-    <div class="bg-gray-900 rounded-xl border border-gray-800" x-data="{ expanded: true }">
-        <div class="p-4 border-b border-gray-800 flex items-center justify-between cursor-pointer" @click="expanded = !expanded">
+    <div class="bg-gray-800/50 rounded-lg border border-gray-700/50" x-data="{ expanded: true }">
+        <div class="p-3.5 border-b border-gray-700/50 flex items-center justify-between cursor-pointer" @click="expanded = !expanded">
             <div class="flex items-center gap-3">
-                <h3 class="font-semibold">📬 Queues {{if .SelectedGroup}}<span class="text-gray-500 text-sm font-normal">for {{.SelectedGroup}}</span>{{end}}</h3>
+                <h4 class="font-semibold text-base">📬 Queues</h4>
                 <div class="relative inline-flex items-center group" @click.stop="">
                     <svg class="w-4 h-4 text-gray-500 hover:text-gray-300 cursor-help" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -410,11 +446,7 @@
                 </div>
             </div>
             <div class="flex items-center gap-3">
-                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-red-900/30 text-red-400 border border-red-800/50">
-                    <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
-                    Real-time • Redis Streams
-                </span>
-            <a href="/queues" class="text-sm text-strego-400 hover:text-strego-300">View all →</a>
+            <a href="/queues" class="text-sm text-red-400 hover:text-red-300 transition-colors">View all →</a>
                 <svg class="w-5 h-5 text-gray-400 transition-transform" :class="expanded ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                 </svg>
@@ -438,6 +470,10 @@
             </div>
         </div>
     </div>
+
+        </div>
+    </div>
+    <!-- End Redis Streams Section -->
 </div>
 
 <script>
@@ -472,13 +508,13 @@ document.body.addEventListener('htmx:afterSwap', function(event) {
 {{end}}
 
 {{define "partial_queues.html"}}
-<div class="divide-y divide-gray-800">
+<div class="divide-y divide-gray-700/30">
     {{range .}}
-    <div class="p-4 flex items-center justify-between hover:bg-gray-800/50 transition-colors">
+    <div class="p-4 flex items-center justify-between hover:bg-gray-900/30 transition-colors">
         <div class="flex items-center gap-3">
             <span class="text-lg">📬</span>
             <div>
-                <a href="/queues/{{.Name}}" class="font-medium hover:text-strego-400">{{.Name}}</a>
+                <a href="/queues/{{.Name}}" class="font-medium hover:text-red-400 transition-colors">{{.Name}}</a>
             </div>
         </div>
         <div class="flex items-center gap-6 text-sm">

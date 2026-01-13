@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -404,7 +405,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// If no group selected, use first one
+	// Sort consumer groups alphabetically by name
+	sort.Slice(consumerGroups, func(i, j int) bool {
+		return consumerGroups[i].Name < consumerGroups[j].Name
+	})
+
+	// If no group selected, use first one (now alphabetically first)
 	if selectedGroup == "" && len(consumerGroups) > 0 {
 		selectedGroup = consumerGroups[0].Name
 	}
@@ -821,7 +827,7 @@ func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 	// Return success for HTMX
 	w.Header().Set("HX-Trigger", "taskRetried")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `<span class="text-green-600">✅ Task queued for retry</span>`)
+	_, _ = fmt.Fprintf(w, `<span class="text-green-600">✅ Task queued for retry</span>`)
 }
 
 func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
@@ -839,7 +845,7 @@ func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("HX-Trigger", "taskDeleted")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `<span class="text-green-600">✅ Task deleted</span>`)
+	_, _ = fmt.Fprintf(w, `<span class="text-green-600">✅ Task deleted</span>`)
 }
 
 func (s *Server) handleRetryAllDead(w http.ResponseWriter, r *http.Request) {
@@ -859,7 +865,7 @@ func (s *Server) handleRetryAllDead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("HX-Trigger", "dlqCleared")
-	fmt.Fprintf(w, `<span class="text-green-600">✅ %d tasks queued for retry</span>`, retried)
+	_, _ = fmt.Fprintf(w, `<span class="text-green-600">✅ %d tasks queued for retry</span>`, retried)
 }
 
 func (s *Server) handlePurgeDead(w http.ResponseWriter, r *http.Request) {
@@ -871,7 +877,7 @@ func (s *Server) handlePurgeDead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("HX-Trigger", "dlqPurged")
-	fmt.Fprintf(w, `<span class="text-green-600">✅ DLQ purged</span>`)
+	_, _ = fmt.Fprintf(w, `<span class="text-green-600">✅ DLQ purged</span>`)
 }
 
 func (s *Server) handleCleanupConsumers(w http.ResponseWriter, r *http.Request) {
@@ -956,15 +962,15 @@ func (s *Server) handleCleanupConsumers(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("HX-Trigger", "refresh")
 	if totalRemoved > 0 {
-		fmt.Fprintf(w, `<div class="text-sm"><span class="text-green-400 font-medium">✅ Removed %d dead consumer(s)</span>`, totalRemoved)
+		_, _ = fmt.Fprintf(w, `<div class="text-sm"><span class="text-green-400 font-medium">✅ Removed %d dead consumer(s)</span>`, totalRemoved)
 		if skippedWithPending > 0 {
-			fmt.Fprintf(w, `<br><span class="text-amber-400 mt-1 block">⚠️ Skipped %d dead consumer(s) with pending tasks (use XAUTOCLAIM to recover)</span>`, skippedWithPending)
+			_, _ = fmt.Fprintf(w, `<br><span class="text-amber-400 mt-1 block">⚠️ Skipped %d dead consumer(s) with pending tasks (use XAUTOCLAIM to recover)</span>`, skippedWithPending)
 		}
-		fmt.Fprintf(w, `</div>`)
+		_, _ = fmt.Fprintf(w, `</div>`)
 	} else if skippedWithPending > 0 {
-		fmt.Fprintf(w, `<div class="text-sm"><span class="text-amber-400">⚠️ Found %d dead consumer(s) but they have pending tasks in PEL</span><br><span class="text-gray-400 text-xs mt-1 block">Wait for crash recovery (XAUTOCLAIM) to claim these tasks, then cleanup will work</span></div>`, skippedWithPending)
+		_, _ = fmt.Fprintf(w, `<div class="text-sm"><span class="text-amber-400">⚠️ Found %d dead consumer(s) but they have pending tasks in PEL</span><br><span class="text-gray-400 text-xs mt-1 block">Wait for crash recovery (XAUTOCLAIM) to claim these tasks, then cleanup will work</span></div>`, skippedWithPending)
 	} else {
-		fmt.Fprintf(w, `<span class="text-gray-400 text-sm">✓ No dead consumers to remove</span>`)
+		_, _ = fmt.Fprintf(w, `<span class="text-gray-400 text-sm">✓ No dead consumers to remove</span>`)
 	}
 }
 
@@ -972,17 +978,17 @@ func (s *Server) handleCleanupConsumers(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handlePartialStats(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil {
-		fmt.Fprint(w, `<div class="text-gray-500">Stats require PostgreSQL</div>`)
+		_, _ = fmt.Fprint(w, `<div class="text-gray-500">Stats require PostgreSQL</div>`)
 		return
 	}
 
 	stats, err := s.store.GetStats(r.Context())
 	if err != nil {
-		fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
+		_, _ = fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
 		return
 	}
 
-	s.tmpl.ExecuteTemplate(w, "partial_stats.html", stats)
+	_ = s.tmpl.ExecuteTemplate(w, "partial_stats.html", stats)
 }
 
 func (s *Server) handlePartialQueues(w http.ResponseWriter, r *http.Request) {
@@ -991,7 +997,7 @@ func (s *Server) handlePartialQueues(w http.ResponseWriter, r *http.Request) {
 
 	queues, err := s.broker.GetQueues(ctx)
 	if err != nil {
-		fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
+		_, _ = fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
 		return
 	}
 
@@ -1022,7 +1028,7 @@ func (s *Server) handlePartialQueues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(queueInfos) == 0 {
-		fmt.Fprint(w, `<div class="p-8 text-center">
+		_, _ = fmt.Fprint(w, `<div class="p-8 text-center">
 			<div class="text-gray-600 mb-2">📭</div>
 			<p class="text-gray-500 text-sm">No queues found for this consumer group</p>
 			<p class="text-gray-600 text-xs mt-1">Try selecting a different group from the dropdown above</p>
@@ -1030,7 +1036,7 @@ func (s *Server) handlePartialQueues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.tmpl.ExecuteTemplate(w, "partial_queues.html", queueInfos)
+	_ = s.tmpl.ExecuteTemplate(w, "partial_queues.html", queueInfos)
 }
 
 func (s *Server) handlePartialConsumers(w http.ResponseWriter, r *http.Request) {
@@ -1038,13 +1044,13 @@ func (s *Server) handlePartialConsumers(w http.ResponseWriter, r *http.Request) 
 	selectedGroup := r.URL.Query().Get("group")
 
 	if selectedGroup == "" {
-		fmt.Fprint(w, `<div class="text-gray-500 text-sm">No consumer group selected</div>`)
+		_, _ = fmt.Fprint(w, `<div class="text-gray-500 text-sm">No consumer group selected</div>`)
 		return
 	}
 
 	queues, err := s.broker.GetQueues(ctx)
 	if err != nil {
-		fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
+		_, _ = fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
 		return
 	}
 
@@ -1105,7 +1111,7 @@ func (s *Server) handlePartialConsumers(w http.ResponseWriter, r *http.Request) 
 
 	// Render consumers
 	for _, consumer := range consumers {
-		fmt.Fprintf(w, `<div class="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800/70 transition-colors">
+		_, _ = fmt.Fprintf(w, `<div class="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800/70 transition-colors">
 			<div class="flex items-center gap-3 flex-1">
 				<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs %s font-medium">%s</span>
 				<span class="text-sm font-mono text-strego-400">%s</span>
@@ -1132,7 +1138,7 @@ func (s *Server) handlePartialConsumers(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handlePartialTasks(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil {
-		fmt.Fprint(w, `<div class="text-gray-500">Tasks require PostgreSQL</div>`)
+		_, _ = fmt.Fprint(w, `<div class="text-gray-500">Tasks require PostgreSQL</div>`)
 		return
 	}
 
@@ -1144,11 +1150,11 @@ func (s *Server) handlePartialTasks(w http.ResponseWriter, r *http.Request) {
 
 	tasks, _, err := s.store.ListTasks(r.Context(), filter)
 	if err != nil {
-		fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
+		_, _ = fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
 		return
 	}
 
-	s.tmpl.ExecuteTemplate(w, "partial_tasks.html", tasks)
+	_ = s.tmpl.ExecuteTemplate(w, "partial_tasks.html", tasks)
 }
 
 // Helpers
@@ -1163,7 +1169,7 @@ func (s *Server) render(w http.ResponseWriter, name string, data interface{}) {
 
 func (s *Server) json(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func (s *Server) error(w http.ResponseWriter, message string, err error, status int) {
@@ -1176,5 +1182,5 @@ func (s *Server) error(w http.ResponseWriter, message string, err error, status 
 func (s *Server) jsonError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
