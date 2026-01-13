@@ -354,40 +354,175 @@ func pageRange(current, total, maxVisible int) []int {
 // Page handlers
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get selected group from query param
+	selectedGroup := r.URL.Query().Get("group")
+
+	// Get all queues
+	queues, err := s.broker.GetQueues(ctx)
+	if err != nil {
+		s.error(w, "Failed to get queues", err, http.StatusInternalServerError)
+		return
+	}
+
+	// Collect all consumer groups across all queues
+	groupsMap := make(map[string]*struct {
+		Name          string
+		ConsumerCount int
+	})
+
+	for _, queue := range queues {
+		groups, err := s.broker.GetConsumerGroups(ctx, queue)
+		if err != nil {
+			continue
+		}
+		for _, group := range groups {
+			if _, exists := groupsMap[group.Name]; !exists {
+				// Get consumers for this group (use first queue that has this group)
+				consumers, _ := s.broker.GetGroupConsumers(ctx, queue, group.Name)
+				groupsMap[group.Name] = &struct {
+					Name          string
+					ConsumerCount int
+				}{
+					Name:          group.Name,
+					ConsumerCount: len(consumers),
+				}
+			}
+		}
+	}
+
+	// Convert to slice
+	type ConsumerGroupSummary struct {
+		Name          string
+		ConsumerCount int
+	}
+	var consumerGroups []ConsumerGroupSummary
+	for _, g := range groupsMap {
+		consumerGroups = append(consumerGroups, ConsumerGroupSummary{
+			Name:          g.Name,
+			ConsumerCount: g.ConsumerCount,
+		})
+	}
+
+	// If no group selected, use first one
+	if selectedGroup == "" && len(consumerGroups) > 0 {
+		selectedGroup = consumerGroups[0].Name
+	}
+
+	// Get queue info for selected group
+	var queueInfos []map[string]interface{}
+	type ConsumerDisplay struct {
+		Name        string
+		Pending     int64
+		IdleTime    string
+		Status      string
+		StatusClass string
+	}
+	var consumers []ConsumerDisplay
+
+	if selectedGroup != "" {
+		// Get queue infos for this group
+		for _, queue := range queues {
+			queueInfo := s.getQueueInfoForGroup(ctx, queue, selectedGroup)
+			if queueInfo != nil {
+				queueInfos = append(queueInfos, queueInfo)
+			}
+		}
+
+		// Get consumers for this group (from first queue)
+		if len(queues) > 0 {
+			consumerList, _ := s.broker.GetGroupConsumers(ctx, queues[0], selectedGroup)
+			for _, c := range consumerList {
+				status := "🟢 Active"
+				statusClass := "bg-green-900/30 text-green-400"
+
+				// Determine status based on idle time
+				idleSeconds := c.Idle / 1000
+				if idleSeconds > 300 { // > 5 minutes
+					status = "🔴 Dead"
+					statusClass = "bg-red-900/30 text-red-400"
+				} else if idleSeconds > 60 { // > 1 minute
+					status = "🟡 Idle"
+					statusClass = "bg-yellow-900/30 text-yellow-400"
+				}
+
+				consumers = append(consumers, ConsumerDisplay{
+					Name:        c.Name,
+					Pending:     c.Pending,
+					IdleTime:    s.formatIdleTime(c.Idle),
+					Status:      status,
+					StatusClass: statusClass,
+				})
+			}
+		}
+	}
+
 	data := map[string]interface{}{
-		"Title": "Dashboard",
-		"Page":  "dashboard",
+		"Title":          "Dashboard",
+		"Page":           "dashboard",
+		"ConsumerGroups": consumerGroups,
+		"SelectedGroup":  selectedGroup,
+		"Queues":         queueInfos,
+		"Consumers":      consumers,
 	}
 
 	// Get stats from store if available
 	if s.store != nil {
-		stats, err := s.store.GetStats(r.Context())
+		stats, err := s.store.GetStats(ctx)
 		if err == nil {
 			data["Stats"] = stats
 		}
 	}
 
-	// Get queues
-	queues, err := s.broker.GetQueues(r.Context())
-	if err == nil {
-		queueInfos := make([]map[string]interface{}, 0, len(queues))
-		for _, q := range queues {
-			info, err := s.broker.GetQueueInfo(r.Context(), q)
-			if err != nil {
-				continue
-			}
-			queueInfos = append(queueInfos, map[string]interface{}{
-				"Name":      info.Name,
-				"Pending":   info.Pending,
-				"Active":    info.Active,
-				"Dead":      info.Dead,
-				"Processed": info.Processed,
-			})
-		}
-		data["Queues"] = queueInfos
+	s.render(w, "layout.html", data)
+}
+
+// Helper function to get queue info for a specific consumer group
+func (s *Server) getQueueInfoForGroup(ctx context.Context, queue, group string) map[string]interface{} {
+	// Check if this queue has the selected consumer group
+	groups, err := s.broker.GetConsumerGroups(ctx, queue)
+	if err != nil {
+		return nil
 	}
 
-	s.render(w, "layout.html", data)
+	var groupInfo *types.ConsumerGroupInfo
+	for _, g := range groups {
+		if g.Name == group {
+			groupInfo = g
+			break
+		}
+	}
+
+	if groupInfo == nil {
+		return nil // This queue doesn't have the selected group
+	}
+
+	// Get full queue info (this uses broker's own consumer group, but Dead/Processed are global)
+	info, err := s.broker.GetQueueInfo(ctx, queue)
+	if err != nil {
+		return nil
+	}
+
+	return map[string]interface{}{
+		"Name":      queue,
+		"Pending":   info.Pending,
+		"Active":    info.Active,
+		"Dead":      info.Dead,
+		"Processed": info.Processed,
+	}
+}
+
+// Helper function to format idle time
+func (s *Server) formatIdleTime(idleMs int64) string {
+	if idleMs < 1000 {
+		return fmt.Sprintf("%dms", idleMs)
+	} else if idleMs < 60000 {
+		return fmt.Sprintf("%ds", idleMs/1000)
+	} else if idleMs < 3600000 {
+		return fmt.Sprintf("%dm", idleMs/60000)
+	}
+	return fmt.Sprintf("%dh", idleMs/3600000)
 }
 
 func (s *Server) handleQueues(w http.ResponseWriter, r *http.Request) {

@@ -32,12 +32,14 @@ func main() {
 	})
 
 	ctx := context.Background()
+
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		logger.WithError(err).Fatal("failed to connect to redis")
 	}
 	logger.Info("connected to redis")
 
 	// Create broker
+	// Note: Consumer ID is auto-generated as "worker-hostname-pid" if not specified
 	b := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
 		Group:         "strego-example",
 		BatchSize:     10,

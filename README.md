@@ -1,5 +1,10 @@
 # strego
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/erennakbas/strego.svg)](https://pkg.go.dev/github.com/erennakbas/strego)
+[![Go Report Card](https://goreportcard.com/badge/github.com/erennakbas/strego)](https://goreportcard.com/report/github.com/erennakbas/strego)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/erennakbas/strego)](https://github.com/erennakbas/strego/releases/tag/v0.3.5)
+
 A modern, production-ready distributed task queue library for Go.
 
 ## Features
@@ -10,10 +15,13 @@ A modern, production-ready distributed task queue library for Go.
 - **Dead Letter Queue** - Failed tasks after max retries
 - **Scheduled tasks** - Delayed and cron-based execution
 - **Retry with backoff** - Exponential backoff strategy
+- **Crash Recovery** - Automatic claiming of orphaned tasks from dead workers
 - **Multi-worker** - Horizontal scaling with consumer groups
 - **PostgreSQL (optional)** - Task history, search, filtering for UI
-- **Built-in Web UI** - Dashboard with HTMX + Tailwind
-- **Multiple Queues** - Efficient queue isolation with minimal overhead
+- **Built-in Web UI** - Real-time dashboard with consumer group monitoring
+  - Redis Streams: Live queue stats, active consumers
+  - PostgreSQL: Task history and search (optional)
+- **Logrus logging** - Structured logging out of the box
 
 ## Documentation
 
@@ -22,7 +30,7 @@ A modern, production-ready distributed task queue library for Go.
 ## Installation
 
 ```bash
-go get github.com/erennakbas/strego
+go get github.com/erennakbas/strego@v0.3.5
 ```
 
 ## Quick Start
@@ -38,24 +46,30 @@ import (
     "time"
     
     "github.com/redis/go-redis/v9"
-    "github.com/erennakbas/strego/pkg/broker"
-    brokerRedis "github.com/erennakbas/strego/pkg/broker/redis"
-    "github.com/erennakbas/strego/pkg/strego"
+    "github.com/sirupsen/logrus"
+    
+    "github.com/erennakbas/strego"
+    "github.com/erennakbas/strego/broker"
+    brokerRedis "github.com/erennakbas/strego/broker/redis"
 )
 
 func main() {
+    // Setup logger
+    logger := logrus.New()
+    
     // Connect to Redis
     redisClient := redis.NewClient(&redis.Options{
         Addr: "localhost:6379",
     })
 
-    // Create broker with custom consumer config
-    broker := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
-        Group:         "strego-example",
+    // Create broker
+    b := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
+        Group:         "my-app",
         BatchSize:     10,
         BlockDuration: 5 * time.Second,
     }))
-    client := strego.NewClient(broker)
+    
+    client := strego.NewClient(b, strego.WithClientLogger(logger))
 
     // Create and enqueue a task
     task := strego.NewTaskFromBytes("email:send",
@@ -66,10 +80,10 @@ func main() {
 
     info, err := client.Enqueue(context.Background(), task)
     if err != nil {
-        panic(err)
+        logger.WithError(err).Fatal("failed to enqueue")
     }
 
-    fmt.Printf("Task enqueued: %s\n", info.ID)
+    logger.WithField("task_id", info.ID).Info("task enqueued")
 }
 ```
 
@@ -80,44 +94,49 @@ package main
 
 import (
     "context"
-    "log/slog"
     "time"
     
     "github.com/redis/go-redis/v9"
-    "github.com/erennakbas/strego/pkg/broker"
-    brokerRedis "github.com/erennakbas/strego/pkg/broker/redis"
-    "github.com/erennakbas/strego/pkg/strego"
+    "github.com/sirupsen/logrus"
+    
+    "github.com/erennakbas/strego"
+    "github.com/erennakbas/strego/broker"
+    brokerRedis "github.com/erennakbas/strego/broker/redis"
 )
 
 func main() {
+    logger := logrus.New()
+    
     // Connect to Redis
     redisClient := redis.NewClient(&redis.Options{
         Addr: "localhost:6379",
     })
 
-    // Create broker with consumer config
-    broker := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
-        Group:         "strego-example",
-        BatchSize:     10,
-        BlockDuration: 5 * time.Second,
+    // Create broker
+    b := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
+        Group:           "my-app",
+        BatchSize:       10,
+        BlockDuration:   5 * time.Second,
+        ClaimStaleAfter: 5 * time.Minute, // Claim orphaned tasks from dead workers
     }))
     
     // Create server
-    server := strego.NewServer(broker,
+    server := strego.NewServer(b,
         strego.WithConcurrency(10),
         strego.WithQueues("default", "critical"),
+        strego.WithServerLogger(logger),
     )
 
     // Register handlers
     server.HandleFunc("email:send", func(ctx context.Context, task *strego.Task) error {
-        slog.Info("processing email", "payload", string(task.Payload()))
+        logrus.WithField("payload", string(task.Payload())).Info("processing email")
         // Your email sending logic here
         return nil
     })
 
     // Start processing (blocks until shutdown)
     if err := server.Start(); err != nil {
-        panic(err)
+        logger.WithError(err).Fatal("server error")
     }
 }
 ```
@@ -125,11 +144,14 @@ func main() {
 ### With Web UI
 
 ```go
+import "github.com/erennakbas/strego/ui"
+
 // Create UI server
 uiServer, _ := ui.NewServer(ui.Config{
     Addr:   ":8080",
-    Broker: broker,
+    Broker: b,
     Store:  pgStore, // optional PostgreSQL store
+    Logger: logger,
 })
 
 go uiServer.Start()
@@ -154,35 +176,33 @@ task := strego.NewTaskFromBytes("task:type", payload,
 
 ## Broker Configuration
 
-The broker can be configured with consumer settings that control how tasks are consumed from Redis Streams:
-
 ```go
-broker := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
-    Group:           "strego-workers",      // Consumer group name
-    Consumer:        "",                    // Auto-generated if empty
-    BatchSize:       10,                    // Tasks to fetch per batch
-    BlockDuration:   5 * time.Second,       // Wait time for new messages
-    ClaimStaleAfter: 5 * time.Minute,       // Claim stale pending messages
+b := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
+    Group:           "my-workers",         // Consumer group name
+    Consumer:        "",                   // Auto-generated if empty
+    BatchSize:       10,                   // Tasks to fetch per batch
+    BlockDuration:   5 * time.Second,      // Wait time for new messages
+    ClaimStaleAfter: 5 * time.Minute,      // Claim orphaned tasks from crashed workers
 }))
 ```
 
 **Configuration Options:**
 - **Group**: Consumer group name. Multiple workers in the same group share the workload.
-- **BatchSize**: Number of tasks fetched in a single Redis call. Higher values improve throughput but increase memory usage.
-- **BlockDuration**: How long to wait for new messages. During this time, the consumer blocks waiting for new tasks. Other consumers can still read in parallel.
-- **ClaimStaleAfter**: Duration after which pending messages from crashed workers are automatically claimed by other workers.
+- **BatchSize**: Number of tasks fetched in a single Redis call.
+- **BlockDuration**: How long to wait for new messages.
+- **ClaimStaleAfter**: Duration after which pending messages from crashed workers are automatically claimed.
 
 ## Server Options
 
 ```go
-server := strego.NewServer(broker,
+server := strego.NewServer(b,
     strego.WithConcurrency(10),                    // Worker count
     strego.WithQueues("default", "critical"),      // Queues to process
     strego.WithShutdownTimeout(30*time.Second),    // Graceful shutdown
     strego.WithProcessedTTL(24*time.Hour),         // Idempotency TTL
     strego.WithRetryConfig(1*time.Second, 10*time.Minute), // Backoff config
     strego.WithServerStore(pgStore),               // Optional PostgreSQL
-    strego.WithServerLogger(logger),               // Custom logger
+    strego.WithServerLogger(logger),               // Logger
 )
 ```
 
@@ -191,48 +211,28 @@ server := strego.NewServer(broker,
 PostgreSQL is optional but enables task history, search, and full UI features.
 
 ```go
-import "github.com/erennakbas/strego/pkg/store/postgres"
+import "github.com/erennakbas/strego/store/postgres"
 
 store, _ := postgres.New(postgres.Config{
     DSN: "postgres://user:pass@localhost/strego?sslmode=disable",
 })
 
-client := strego.NewClient(broker, strego.WithStore(store))
-server := strego.NewServer(broker, strego.WithServerStore(store))
+client := strego.NewClient(b, strego.WithStore(store))
+server := strego.NewServer(b, strego.WithServerStore(store))
 uiServer, _ := ui.NewServer(ui.Config{
-    Broker: broker,
+    Broker: b,
     Store:  store,
 })
 ```
 
-## Queue Management
+## Examples
 
-### Multiple Queues
-
-Strego efficiently supports multiple queues with minimal overhead. Each queue is isolated and can have different priorities, rate limits, and monitoring.
-
-**Queue Creation:**
-- Queues are created lazily on first use (no upfront cost)
-- Each queue uses ~1-2KB memory when empty
-- All queues are consumed in a single efficient Redis call
-
-**Example with 20+ Queues:**
-```go
-// Efficient - all queues processed in one XReadGroup call
-server := strego.NewServer(broker,
-    strego.WithQueues(
-        "email", "notification", "report", "analytics",
-        "payment", "order", "inventory", "shipping",
-        // ... 20+ queues
-    ),
-)
-```
-
-**Benefits:**
-- Task type isolation
-- Independent monitoring and stats
-- Separate priority and rate limiting
-- One queue failure doesn't affect others
+| Example | Description |
+|---------|-------------|
+| [basic](examples/basic) | Simple producer/consumer setup |
+| [with-postgres](examples/with-postgres) | PostgreSQL integration for task history |
+| [production](examples/production) | Multi-phase retry scenarios |
+| [crash-recovery](examples/crash-recovery) | Worker crash and task claiming demo |
 
 ## Redis Key Structure
 
@@ -249,24 +249,24 @@ strego:queues                 # Set - all queue names
 
 ## Performance & Scaling
 
-- **Horizontal Scaling**: Add more workers to the same consumer group for automatic load balancing
-- **Queue Isolation**: Multiple queues (200+) with minimal overhead (~400-600KB for empty queues)
+- **Horizontal Scaling**: Add more workers to the same consumer group
+- **Crash Recovery**: Orphaned tasks automatically claimed by healthy workers
+- **Queue Isolation**: Multiple queues with minimal overhead
 - **Batch Processing**: Configurable batch size for optimal throughput
-- **Memory Efficient**: Lazy queue creation, automatic cleanup of processed tasks
-- **Low Latency**: Blocking reads with configurable timeout for immediate task processing
+- **Panic Recovery**: Handler panics are caught and result in retry
 
 ## Comparison
 
 | Feature | asynq | machinery | strego |
 |---------|-------|-----------|--------|
 | Redis Backend | Lists | Lists | **Streams** |
-| Serialization | JSON | JSON | **JSON** |
 | Consumer Groups | Custom | Custom | **Native** |
 | Crash Recovery | Limited | Limited | **Built-in** |
 | PostgreSQL | ❌ | ❌ | ✅ |
 | Web UI | Separate | ❌ | **Built-in** |
 | Exactly-once | UniqueTask | ❌ | ✅ |
-| Multiple Queues | Limited | Limited | **Efficient** |
+| Panic Recovery | ✅ | ✅ | ✅ |
+| Logging | slog | - | **logrus** |
 
 ## License
 

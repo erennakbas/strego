@@ -37,6 +37,22 @@ func (s TaskState) String() string {
 	return string(s)
 }
 
+// ConsumerGroupInfo represents information about a Redis consumer group.
+type ConsumerGroupInfo struct {
+	Name            string
+	Consumers       int64
+	Pending         int64
+	LastDeliveredID string
+}
+
+// ConsumerInfo represents information about a consumer in a group.
+type ConsumerInfo struct {
+	Name     string
+	Pending  int64
+	Idle     int64 // milliseconds
+	Inactive int64 // milliseconds
+}
+
 // TaskProto is the serializable task structure stored in Redis.
 type TaskProto struct {
 	ID       string          `json:"id"`

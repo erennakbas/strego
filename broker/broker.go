@@ -57,6 +57,12 @@ type Broker interface {
 	// GetQueues returns all known queue names
 	GetQueues(ctx context.Context) ([]string, error)
 
+	// GetConsumerGroups returns all consumer groups for a queue
+	GetConsumerGroups(ctx context.Context, queue string) ([]*types.ConsumerGroupInfo, error)
+
+	// GetGroupConsumers returns all consumers in a consumer group
+	GetGroupConsumers(ctx context.Context, queue, group string) ([]*types.ConsumerInfo, error)
+
 	// PurgeQueue removes all tasks from a queue
 	PurgeQueue(ctx context.Context, queue string) error
 

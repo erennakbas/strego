@@ -67,6 +67,7 @@ func main() {
 	// ============================================
 	// Create Broker
 	// ============================================
+	// Note: Consumer ID is auto-generated as "worker-hostname-pid" if not specified
 	b := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
 		Group:           "strego-prod-example",
 		BatchSize:       10,

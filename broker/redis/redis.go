@@ -53,14 +53,15 @@ func NewBroker(client *redis.Client, opts ...Option) *Broker {
 		config: broker.DefaultConsumerConfig(),
 	}
 
-	// Set default consumer name if not provided
+	// Apply options first
+	for _, opt := range opts {
+		opt(b)
+	}
+
+	// Set default consumer name if not provided (after options)
 	if b.config.Consumer == "" {
 		hostname, _ := os.Hostname()
 		b.config.Consumer = fmt.Sprintf("worker-%s-%d", hostname, os.Getpid())
-	}
-
-	for _, opt := range opts {
-		opt(b)
 	}
 
 	return b
@@ -654,6 +655,52 @@ func (b *Broker) GetQueueInfo(ctx context.Context, queue string) (*types.QueueIn
 // GetQueues returns all known queue names
 func (b *Broker) GetQueues(ctx context.Context) ([]string, error) {
 	return b.client.SMembers(ctx, queuesKey).Result()
+}
+
+// GetConsumerGroups returns all consumer groups for a queue
+func (b *Broker) GetConsumerGroups(ctx context.Context, queue string) ([]*types.ConsumerGroupInfo, error) {
+	groups, err := b.client.XInfoGroups(ctx, b.streamKey(queue)).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return []*types.ConsumerGroupInfo{}, nil
+		}
+		return nil, fmt.Errorf("failed to get consumer groups: %w", err)
+	}
+
+	result := make([]*types.ConsumerGroupInfo, 0, len(groups))
+	for _, g := range groups {
+		result = append(result, &types.ConsumerGroupInfo{
+			Name:            g.Name,
+			Consumers:       g.Consumers,
+			Pending:         g.Pending,
+			LastDeliveredID: g.LastDeliveredID,
+		})
+	}
+
+	return result, nil
+}
+
+// GetGroupConsumers returns all consumers in a consumer group
+func (b *Broker) GetGroupConsumers(ctx context.Context, queue, group string) ([]*types.ConsumerInfo, error) {
+	consumers, err := b.client.XInfoConsumers(ctx, b.streamKey(queue), group).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return []*types.ConsumerInfo{}, nil
+		}
+		return nil, fmt.Errorf("failed to get group consumers: %w", err)
+	}
+
+	result := make([]*types.ConsumerInfo, 0, len(consumers))
+	for _, c := range consumers {
+		result = append(result, &types.ConsumerInfo{
+			Name:     c.Name,
+			Pending:  c.Pending,
+			Idle:     c.Idle.Milliseconds(),
+			Inactive: c.Inactive.Milliseconds(),
+		})
+	}
+
+	return result, nil
 }
 
 // PurgeQueue removes all tasks from a queue

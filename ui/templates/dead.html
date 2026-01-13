@@ -1,7 +1,16 @@
 {{define "dead.html"}}
 <div class="space-y-6">
     <div class="flex items-center justify-between">
-        <h2 class="text-2xl font-bold">💀 Dead Letter Queue</h2>
+        <div>
+            <div class="flex items-center gap-3">
+                <h2 class="text-2xl font-bold">💀 Dead Letter Queue</h2>
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-red-900/30 text-red-400 border border-red-800/50">
+                    <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+                    Real-time • Redis Streams
+                </span>
+            </div>
+            <p class="text-sm text-gray-500 mt-1">Failed tasks that exceeded max retry attempts</p>
+        </div>
     </div>
 
     {{range $queue, $tasks := .DeadTasks}}
@@ -40,7 +49,7 @@
                 {{range $tasks}}
                 <tr class="hover:bg-gray-800/50 transition-colors" id="task-row-{{.ID}}">
                     <td class="px-4 py-3">
-                        <span class="font-mono text-sm">{{truncate .ID 8}}</span>
+                        <a href="/tasks/{{.ID}}" class="font-mono text-sm text-strego-400 hover:text-strego-300">{{truncate .ID 8}}</a>
                     </td>
                     <td class="px-4 py-3 text-gray-300">{{.Type}}</td>
                     <td class="px-4 py-3">
