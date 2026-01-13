@@ -20,7 +20,7 @@ import (
 // Default configuration values
 const (
 	DefaultConcurrency       = 10
-	DefaultShutdownTimeout   = 30 * time.Second
+	DefaultShutdownTimeout   = 10 * time.Second
 	DefaultProcessedTTL      = 24 * time.Hour
 	DefaultSchedulerTick     = 1 * time.Second
 	DefaultRetryBaseDuration = 1 * time.Second

@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
 
 	"github.com/erennakbas/strego/broker"
 	"github.com/erennakbas/strego/types"
@@ -32,6 +34,7 @@ const (
 type Broker struct {
 	client *redis.Client
 	config broker.ConsumerConfig
+	logger types.Logger
 	mu     sync.RWMutex
 	closed bool
 }
@@ -46,11 +49,19 @@ func WithConsumerConfig(cfg broker.ConsumerConfig) Option {
 	}
 }
 
+// WithLogger sets the logger for the broker
+func WithLogger(logger types.Logger) Option {
+	return func(b *Broker) {
+		b.logger = logger
+	}
+}
+
 // NewBroker creates a new Redis Streams broker
 func NewBroker(client *redis.Client, opts ...Option) *Broker {
 	b := &Broker{
 		client: client,
 		config: broker.DefaultConsumerConfig(),
+		logger: logrus.StandardLogger(),
 	}
 
 	// Apply options first
@@ -120,28 +131,33 @@ func (b *Broker) Subscribe(ctx context.Context, queues []string, handler broker.
 		}
 	}
 
-	// First, recover any pending messages from previous runs
-	if err := b.recoverPending(ctx, queues, handler); err != nil {
-		return fmt.Errorf("failed to recover pending: %w", err)
+	// Start background claimer goroutine first (before recovery)
+	// This ensures the goroutine is scheduled early and ready to claim stale messages
+	go b.backgroundClaimer(ctx, queues, handler)
+
+	// Recover this consumer's own pending messages from previous runs
+	// This is useful when using stable consumer names (e.g., Kubernetes StatefulSet)
+	// For dynamic consumer names, this will return quickly with no messages
+	if err := b.recoverOwnPending(ctx, queues, handler); err != nil {
+		return fmt.Errorf("failed to recover own pending messages: %w", err)
 	}
+
+	// Pre-allocate streams array (reused in every iteration for efficiency)
+	streams := make([]string, 0, len(queues)*2)
+	for _, q := range queues {
+		streams = append(streams, b.streamKey(q))
+	}
+	for range queues {
+		streams = append(streams, ">") // ">" means only new messages
+	}
+
+	// Transient error tracking
+	const maxRetries = 10
+	retryCount := 0
 
 	// Main consume loop
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Build streams list for XREADGROUP
-		streams := make([]string, 0, len(queues)*2)
-		for _, q := range queues {
-			streams = append(streams, b.streamKey(q))
-		}
-		for range queues {
-			streams = append(streams, ">") // ">" means only new messages
-		}
-
+		// XReadGroup respects context and blocks, no need for select + default
 		results, err := b.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    b.config.Group,
 			Consumer: b.config.Consumer,
@@ -151,20 +167,60 @@ func (b *Broker) Subscribe(ctx context.Context, queues []string, handler broker.
 		}).Result()
 
 		if err != nil {
-			if err == redis.Nil {
-				continue // No messages, try again
+			// No messages - continue (not an error, just empty)
+			if errors.Is(err, redis.Nil) {
+				retryCount = 0 // Reset retry count on success
+				continue
 			}
+
+			// Context cancelled - clean shutdown
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+
+			// Transient errors (network issues, timeouts) - retry with exponential backoff
+			if isTransientError(err) {
+				retryCount++
+
+				// Check if we've exceeded max retries
+				if retryCount > maxRetries {
+					b.logger.WithError(err).
+						WithField("retry_count", retryCount).
+						Error("max retries exceeded for transient error, giving up")
+					return fmt.Errorf("max retries (%d) exceeded: %w", maxRetries, err)
+				}
+
+				// Calculate exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s (max 30s)
+				backoff := time.Duration(1<<uint(retryCount-1)) * time.Second
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
+
+				b.logger.WithError(err).
+					WithField("retry_count", retryCount).
+					WithField("backoff_seconds", backoff.Seconds()).
+					Warn("transient error encountered, retrying with exponential backoff")
+
+				time.Sleep(backoff)
+				continue
+			}
+
+			// Fatal error - return and let caller handle
+			b.logger.WithError(err).Error("fatal error reading from stream")
 			return fmt.Errorf("failed to read from stream: %w", err)
 		}
 
+		// Success - reset retry count
+		if retryCount > 0 {
+			retryCount = 0
+		}
+
+		// Process messages
 		for _, stream := range results {
 			queue := stream.Stream[len(streamPrefix):]
 			for _, msg := range stream.Messages {
 				if err := b.processMessage(ctx, queue, msg, handler); err != nil {
-					// Error is logged but we continue processing
+					// processMessage handles retries/DLQ internally, just continue
 					continue
 				}
 			}
@@ -203,22 +259,25 @@ func (b *Broker) processMessage(ctx context.Context, queue string, msg redis.XMe
 	return b.Ack(ctx, queue, msg.ID)
 }
 
-// recoverPending processes any pending messages from previous runs
-func (b *Broker) recoverPending(ctx context.Context, queues []string, handler broker.TaskHandler) error {
+// recoverOwnPending processes this consumer's own pending messages from previous runs.
+// This only recovers messages that were previously claimed by THIS specific consumer.
+// Stale messages from other consumers are handled by the backgroundClaimer goroutine.
+func (b *Broker) recoverOwnPending(ctx context.Context, queues []string, handler broker.TaskHandler) error {
 	for _, queue := range queues {
 		streamKey := b.streamKey(queue)
 
 		for {
-			// Get pending messages for this consumer
+			// Get pending messages for THIS consumer only
+			// "0" means read pending messages (not new ones)
 			pending, err := b.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 				Group:    b.config.Group,
 				Consumer: b.config.Consumer,
-				Streams:  []string{streamKey, "0"}, // "0" means pending messages
+				Streams:  []string{streamKey, "0"},
 				Count:    b.config.BatchSize,
 			}).Result()
 
 			if err != nil {
-				if err == redis.Nil {
+				if errors.Is(err, redis.Nil) {
 					break
 				}
 				return err
@@ -233,11 +292,6 @@ func (b *Broker) recoverPending(ctx context.Context, queues []string, handler br
 					continue
 				}
 			}
-		}
-
-		// Claim stale messages from other consumers
-		if err := b.claimStale(ctx, queue, handler); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -276,6 +330,39 @@ func (b *Broker) claimStale(ctx context.Context, queue string, handler broker.Ta
 	}
 
 	return nil
+}
+
+// backgroundClaimer runs in a separate goroutine to periodically claim stale messages
+// This ensures that crashed workers' messages are recovered even when the system is running
+func (b *Broker) backgroundClaimer(ctx context.Context, queues []string, handler broker.TaskHandler) {
+	// Use a ticker to check for stale messages periodically
+	ticker := time.NewTicker(b.config.ClaimCheckInterval)
+	defer ticker.Stop()
+
+	b.logger.WithField("interval", b.config.ClaimCheckInterval).
+		WithField("queues", queues).
+		Debug("background claimer started")
+
+	for {
+		select {
+		case <-ctx.Done():
+			b.logger.Debug("background claimer stopped")
+			return
+		case <-ticker.C:
+			// Check each queue for stale messages
+			for _, queue := range queues {
+				// Run claim in a non-blocking way - if it fails, log and continue
+				if err := b.claimStale(ctx, queue, handler); err != nil {
+					// Only log if context is not cancelled
+					if ctx.Err() == nil {
+						b.logger.WithError(err).
+							WithField("queue", queue).
+							Warn("failed to claim stale messages, will retry on next tick")
+					}
+				}
+			}
+		}
+	}
 }
 
 // Ack acknowledges a task as successfully processed
@@ -728,6 +815,39 @@ func (b *Broker) PurgeDLQ(ctx context.Context, queue string) error {
 // Ping checks if the broker is healthy
 func (b *Broker) Ping(ctx context.Context) error {
 	return b.client.Ping(ctx).Err()
+}
+
+// isTransientError checks if an error is transient and should be retried
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for context deadline exceeded
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	// Check for common transient network/Redis errors
+	errStr := err.Error()
+	transientPatterns := []string{
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"i/o timeout",
+		"timeout",
+		"EOF",
+		"network is unreachable",
+		"no route to host",
+	}
+
+	for _, pattern := range transientPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Close closes the broker connection

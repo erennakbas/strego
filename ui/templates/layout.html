@@ -43,6 +43,88 @@
     </style>
 </head>
 <body class="h-full bg-gray-950 text-gray-100" x-data="{ sidebarOpen: true }">
+    
+    <!-- Global Toast Notifications -->
+    <div x-data="{ 
+        toasts: [],
+        addToast(message, type = 'success') {
+            const id = Date.now();
+            const toast = { id, message, type, show: false };
+            this.toasts.push(toast);
+            // Trigger transition
+            setTimeout(() => {
+                const t = this.toasts.find(t => t.id === id);
+                if (t) t.show = true;
+            }, 10);
+            // Auto remove
+            setTimeout(() => {
+                this.removeToast(id);
+            }, 5500);
+        },
+        removeToast(id) {
+            const toast = this.toasts.find(t => t.id === id);
+            if (toast) {
+                toast.show = false;
+                setTimeout(() => {
+                    this.toasts = this.toasts.filter(t => t.id !== id);
+                }, 300);
+            }
+        }
+    }" 
+    @toast.window="addToast($event.detail.message, $event.detail.type)"
+    class="fixed top-4 right-4 z-[100] space-y-3 pointer-events-none">
+        <template x-for="toast in toasts" :key="toast.id">
+            <div x-show="toast.show" 
+                 x-transition:enter="transition ease-out duration-500 transform"
+                 x-transition:enter-start="opacity-0 translate-x-full"
+                 x-transition:enter-end="opacity-100 translate-x-0"
+                 x-transition:leave="transition ease-in duration-300 transform"
+                 x-transition:leave-start="opacity-100 translate-x-0"
+                 x-transition:leave-end="opacity-0 translate-x-12"
+                 class="pointer-events-auto overflow-hidden rounded-lg shadow-2xl min-w-[340px] max-w-md">
+                <div :class="{
+                         'bg-emerald-900/95 border-emerald-700/80': toast.type === 'success',
+                         'bg-amber-900/95 border-amber-700/80': toast.type === 'warning',
+                         'bg-blue-900/95 border-blue-700/80': toast.type === 'info',
+                         'bg-red-900/95 border-red-700/80': toast.type === 'error'
+                     }"
+                     class="flex items-start gap-3 px-4 py-3 border backdrop-blur-md relative">
+                    <span x-show="toast.type === 'success'" class="text-emerald-400 text-lg flex-shrink-0 mt-0.5">✓</span>
+                    <span x-show="toast.type === 'warning'" class="text-amber-400 text-lg flex-shrink-0 mt-0.5">⚠</span>
+                    <span x-show="toast.type === 'info'" class="text-blue-400 text-lg flex-shrink-0 mt-0.5">ℹ</span>
+                    <span x-show="toast.type === 'error'" class="text-red-400 text-lg flex-shrink-0 mt-0.5">✕</span>
+                    <span x-html="toast.message" class="text-sm text-white font-medium flex-1 leading-relaxed"></span>
+                    <!-- Close Button -->
+                    <button @click="removeToast(toast.id)" 
+                            class="text-gray-400 hover:text-white transition-colors flex-shrink-0 -mt-0.5 -mr-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <!-- Progress Bar -->
+                <div class="h-1 bg-gray-950/30 overflow-hidden">
+                    <div :class="{
+                             'bg-emerald-500': toast.type === 'success',
+                             'bg-amber-500': toast.type === 'warning',
+                             'bg-blue-500': toast.type === 'info',
+                             'bg-red-500': toast.type === 'error'
+                         }"
+                         class="h-full w-full origin-left"
+                         style="animation: shrink 5.5s linear forwards;">
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+    
+    <style>
+        @keyframes shrink {
+            from { transform: scaleX(1); }
+            to { transform: scaleX(0); }
+        }
+    </style>
+    
     <div class="flex h-full">
         <!-- Sidebar -->
         <aside class="w-64 bg-gray-900 border-r border-gray-800 flex flex-col" x-show="sidebarOpen">
@@ -52,20 +134,20 @@
             </div>
             
             <nav class="flex-1 p-4 space-y-2">
-                <a href="/" class="flex items-center gap-3 px-3 py-2 rounded-lg {{if eq .Page "dashboard"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors">
-                    <span>📊</span>
+                <a href="/" class="flex items-center gap-3 px-4 py-3 rounded-lg text-base {{if eq .Page "dashboard"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors whitespace-nowrap">
+                    <span class="text-lg">📊</span>
                     <span>Dashboard</span>
                 </a>
-                <a href="/queues" class="flex items-center gap-3 px-3 py-2 rounded-lg {{if eq .Page "queues"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors">
-                    <span>📬</span>
+                <a href="/queues" class="flex items-center gap-3 px-4 py-3 rounded-lg text-base {{if eq .Page "queues"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors whitespace-nowrap">
+                    <span class="text-lg">📬</span>
                     <span>Queues</span>
                 </a>
-                <a href="/tasks" class="flex items-center gap-3 px-3 py-2 rounded-lg {{if eq .Page "tasks"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors">
-                    <span>📋</span>
+                <a href="/tasks" class="flex items-center gap-3 px-4 py-3 rounded-lg text-base {{if eq .Page "tasks"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors whitespace-nowrap">
+                    <span class="text-lg">📋</span>
                     <span>Tasks</span>
                 </a>
-                <a href="/dead" class="flex items-center gap-3 px-3 py-2 rounded-lg {{if eq .Page "dead"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors">
-                    <span>💀</span>
+                <a href="/dead" class="flex items-center gap-3 px-4 py-3 rounded-lg text-base {{if eq .Page "dead"}}bg-strego-900/50 text-strego-400{{else}}text-gray-400 hover:bg-gray-800 hover:text-gray-200{{end}} transition-colors whitespace-nowrap">
+                    <span class="text-lg">💀</span>
                     <span>Dead Letter Queue</span>
                 </a>
             </nav>

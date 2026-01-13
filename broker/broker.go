@@ -99,15 +99,19 @@ type ConsumerConfig struct {
 
 	// ClaimStaleAfter is the duration after which stale tasks are claimed
 	ClaimStaleAfter time.Duration
+
+	// ClaimCheckInterval is how often to check for stale tasks (background)
+	ClaimCheckInterval time.Duration
 }
 
 // DefaultConsumerConfig returns a default consumer configuration
 func DefaultConsumerConfig() ConsumerConfig {
 	return ConsumerConfig{
-		Group:           "strego-workers",
-		Consumer:        "",
-		BatchSize:       10,
-		BlockDuration:   5 * time.Second,
-		ClaimStaleAfter: 5 * time.Minute,
+		Group:              "strego-workers",
+		Consumer:           "",
+		BatchSize:          10,
+		BlockDuration:      5 * time.Second,
+		ClaimStaleAfter:    5 * time.Minute,
+		ClaimCheckInterval: 30 * time.Second,
 	}
 }

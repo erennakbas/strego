@@ -723,6 +723,12 @@ func (s *Server) handleDeadLetterQueue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// If HTMX request, render only the content partial
+	if r.Header.Get("HX-Request") == "true" {
+		_ = s.tmpl.ExecuteTemplate(w, "partial_dead_content.html", deadTasks)
+		return
+	}
+
 	data := map[string]interface{}{
 		"Title":     "Dead Letter Queue",
 		"Page":      "dead",
@@ -962,15 +968,14 @@ func (s *Server) handleCleanupConsumers(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("HX-Trigger", "refresh")
 	if totalRemoved > 0 {
-		_, _ = fmt.Fprintf(w, `<div class="text-sm"><span class="text-green-400 font-medium">✅ Removed %d dead consumer(s)</span>`, totalRemoved)
+		_, _ = fmt.Fprintf(w, `Cleaned up %d dead consumer(s) from Redis`, totalRemoved)
 		if skippedWithPending > 0 {
-			_, _ = fmt.Fprintf(w, `<br><span class="text-amber-400 mt-1 block">⚠️ Skipped %d dead consumer(s) with pending tasks (use XAUTOCLAIM to recover)</span>`, skippedWithPending)
+			_, _ = fmt.Fprintf(w, ` • Skipped %d with pending tasks in PEL`, skippedWithPending)
 		}
-		_, _ = fmt.Fprintf(w, `</div>`)
 	} else if skippedWithPending > 0 {
-		_, _ = fmt.Fprintf(w, `<div class="text-sm"><span class="text-amber-400">⚠️ Found %d dead consumer(s) but they have pending tasks in PEL</span><br><span class="text-gray-400 text-xs mt-1 block">Wait for crash recovery (XAUTOCLAIM) to claim these tasks, then cleanup will work</span></div>`, skippedWithPending)
+		_, _ = fmt.Fprintf(w, `Found %d dead consumer(s) with pending tasks • Auto-recovery via XAUTOCLAIM will handle these`, skippedWithPending)
 	} else {
-		_, _ = fmt.Fprintf(w, `<span class="text-gray-400 text-sm">✓ No dead consumers to remove</span>`)
+		_, _ = fmt.Fprintf(w, `No dead consumers found in consumer group`)
 	}
 }
 

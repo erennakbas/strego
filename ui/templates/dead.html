@@ -11,70 +11,170 @@
             </div>
             <p class="text-sm text-gray-500 mt-1">Failed tasks that exceeded max retry attempts</p>
         </div>
-    </div>
-
-    {{range $queue, $tasks := .DeadTasks}}
-    <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-        <div class="p-4 border-b border-gray-800 flex items-center justify-between bg-red-900/10">
-            <div class="flex items-center gap-3">
-                <span class="text-lg">📬</span>
-                <h3 class="font-semibold">{{$queue}}</h3>
-                <span class="px-2 py-1 rounded-full text-xs bg-red-900/50 text-red-400">{{len $tasks}} dead</span>
+        <!-- Auto-refresh controls -->
+        <div class="flex items-center gap-3 text-sm" id="refresh-controls"
+             x-data="{ 
+                lastUpdated: new Date(),
+                isPaused: false,
+                isTabVisible: true,
+                toggleAutoRefresh() {
+                    this.isPaused = !this.isPaused;
+                    this.updateTriggers();
+                },
+                updateTriggers() {
+                    const shouldAutoRefresh = !this.isPaused && this.isTabVisible;
+                    const trigger = shouldAutoRefresh ? 'every 30s, manualRefresh' : 'manualRefresh';
+                    
+                    const deadContent = document.getElementById('dead-content');
+                    if (deadContent) {
+                        deadContent.setAttribute('hx-trigger', trigger);
+                        htmx.process(deadContent);
+                    }
+                },
+                init() {
+                    window.updateDeadTime = () => {
+                        this.lastUpdated = new Date();
+                    };
+                    
+                    document.addEventListener('visibilitychange', () => {
+                        this.isTabVisible = !document.hidden;
+                        this.updateTriggers();
+                        
+                        if (this.isTabVisible && !this.isPaused) {
+                            htmx.trigger('#dead-content', 'manualRefresh');
+                        }
+                    });
+                    
+                    this.updateTriggers();
+                }
+             }">
+            <!-- Auto-refresh indicator -->
+            <div class="flex items-center gap-2 text-gray-500">
+                <span id="refresh-indicator" class="htmx-indicator">
+                    <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </span>
+                <span class="flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full transition-colors" :class="isPaused ? 'bg-gray-500' : 'bg-green-500 animate-pulse'"></span>
+                    <span>Auto-refresh: 30s</span>
+                </span>
             </div>
-            <div class="flex items-center gap-2">
-                <button hx-post="/dead/{{$queue}}/retry-all"
-                    hx-swap="outerHTML"
-                    class="bg-strego-600 hover:bg-strego-500 text-white px-3 py-1 rounded-lg text-sm font-medium transition-colors">
-                    🔄 Retry All
-                </button>
-                <button hx-post="/dead/{{$queue}}/purge"
-                    hx-confirm="Are you sure you want to purge all dead tasks from this queue?"
-                    hx-swap="outerHTML"
-                    class="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg text-sm font-medium transition-colors">
-                    🗑️ Purge
-                </button>
+            
+            <!-- Pause/Play button -->
+            <button 
+                @click="toggleAutoRefresh()"
+                class="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg transition-all border border-gray-700 hover:border-gray-600"
+                :title="isPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'">
+                <svg x-show="isPaused" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+                <svg x-show="!isPaused" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+                </svg>
+            </button>
+            
+            <!-- Manual refresh button -->
+            <button 
+                @click="htmx.trigger('#dead-content', 'manualRefresh'); lastUpdated = new Date();"
+                class="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg transition-all border border-gray-700 hover:border-gray-600"
+                title="Refresh now">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+            </button>
+            
+            <!-- Last updated timestamp -->
+            <div class="flex items-center gap-1 text-[11px] text-gray-600">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span x-text="lastUpdated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })">--:--:--</span>
             </div>
         </div>
-        <table class="w-full">
-            <thead class="bg-gray-800/50">
-                <tr>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">ID</th>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">Type</th>
-                    <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">Error</th>
-                    <th class="px-4 py-3 text-center text-sm font-medium text-gray-400">Retries</th>
-                    <th class="px-4 py-3 text-right text-sm font-medium text-gray-400">Actions</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-800">
-                {{range $tasks}}
-                <tr class="hover:bg-gray-800/50 transition-colors" id="task-row-{{.ID}}">
-                    <td class="px-4 py-3">
-                        <a href="/tasks/{{.ID}}" class="font-mono text-sm text-strego-400 hover:text-strego-300">{{truncate .ID 8}}</a>
-                    </td>
-                    <td class="px-4 py-3 text-gray-300">{{.Type}}</td>
-                    <td class="px-4 py-3">
-                        <span class="text-sm text-red-400">{{truncate .Metadata.LastError 50}}</span>
-                    </td>
-                    <td class="px-4 py-3 text-center text-gray-400">{{.Metadata.RetryCount}}</td>
-                    <td class="px-4 py-3 text-right">
-                        <button hx-post="/tasks/{{.ID}}/retry?queue={{$queue}}"
-                            hx-target="#task-row-{{.ID}}"
-                            hx-swap="outerHTML"
-                            class="text-sm text-strego-400 hover:text-strego-300">
-                            Retry
-                        </button>
-                    </td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
     </div>
-    {{else}}
-    <div class="bg-gray-900 rounded-xl border border-gray-800 p-8 text-center">
-        <div class="text-4xl mb-4">🎉</div>
-        <div class="text-lg font-medium">No dead tasks!</div>
-        <div class="text-sm text-gray-500 mt-1">All tasks are processing successfully</div>
+
+    <div id="dead-content" 
+         hx-get="/dead" 
+         hx-trigger="manualRefresh"
+         hx-swap="innerHTML"
+         hx-indicator="#refresh-indicator">
+        {{template "partial_dead_content.html" .DeadTasks}}
     </div>
-    {{end}}
 </div>
+
+<script>
+document.body.addEventListener('htmx:afterSwap', function(event) {
+    if (event.detail.target.id === 'dead-content' && typeof window.updateDeadTime === 'function') {
+        window.updateDeadTime();
+    }
+});
+</script>
+{{end}}
+
+{{define "partial_dead_content.html"}}
+{{range $queue, $tasks := .}}
+<div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden mb-4">
+    <div class="p-4 border-b border-gray-800 flex items-center justify-between bg-red-900/10">
+        <div class="flex items-center gap-3">
+            <span class="text-lg">📬</span>
+            <h3 class="font-semibold">{{$queue}}</h3>
+            <span class="px-2 py-1 rounded-full text-xs bg-red-900/50 text-red-400">{{len $tasks}} dead</span>
+        </div>
+        <div class="flex items-center gap-2">
+            <button hx-post="/dead/{{$queue}}/retry-all"
+                hx-swap="outerHTML"
+                class="bg-strego-600 hover:bg-strego-500 text-white px-3 py-1 rounded-lg text-sm font-medium transition-colors">
+                🔄 Retry All
+            </button>
+            <button hx-post="/dead/{{$queue}}/purge"
+                hx-confirm="Are you sure you want to purge all dead tasks from this queue?"
+                hx-swap="outerHTML"
+                class="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg text-sm font-medium transition-colors">
+                🗑️ Purge
+            </button>
+        </div>
+    </div>
+    <table class="w-full">
+        <thead class="bg-gray-800/50">
+            <tr>
+                <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">ID</th>
+                <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">Type</th>
+                <th class="px-4 py-3 text-left text-sm font-medium text-gray-400">Error</th>
+                <th class="px-4 py-3 text-center text-sm font-medium text-gray-400">Retries</th>
+                <th class="px-4 py-3 text-right text-sm font-medium text-gray-400">Actions</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+            {{range $tasks}}
+            <tr class="hover:bg-gray-800/50 transition-colors" id="task-row-{{.ID}}">
+                <td class="px-4 py-3">
+                    <a href="/tasks/{{.ID}}" class="font-mono text-sm text-strego-400 hover:text-strego-300">{{truncate .ID 8}}</a>
+                </td>
+                <td class="px-4 py-3 text-gray-300">{{.Type}}</td>
+                <td class="px-4 py-3">
+                    <span class="text-sm text-red-400">{{truncate .Metadata.LastError 50}}</span>
+                </td>
+                <td class="px-4 py-3 text-center text-gray-400">{{.Metadata.RetryCount}}</td>
+                <td class="px-4 py-3 text-right">
+                    <button hx-post="/tasks/{{.ID}}/retry?queue={{$queue}}"
+                        hx-target="#task-row-{{.ID}}"
+                        hx-swap="outerHTML"
+                        class="text-sm text-strego-400 hover:text-strego-300">
+                        Retry
+                    </button>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{else}}
+<div class="bg-gray-900 rounded-xl border border-gray-800 p-8 text-center">
+    <div class="text-4xl mb-4">🎉</div>
+    <div class="text-lg font-medium">No dead tasks!</div>
+    <div class="text-sm text-gray-500 mt-1">All tasks are processing successfully</div>
+</div>
+{{end}}
 {{end}}
