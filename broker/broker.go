@@ -63,6 +63,10 @@ type Broker interface {
 	// GetGroupConsumers returns all consumers in a consumer group
 	GetGroupConsumers(ctx context.Context, queue, group string) ([]*types.ConsumerInfo, error)
 
+	// RemoveConsumer removes a consumer from a consumer group
+	// This is safe to call when the consumer has no pending tasks
+	RemoveConsumer(ctx context.Context, queue, group, consumer string) error
+
 	// PurgeQueue removes all tasks from a queue
 	PurgeQueue(ctx context.Context, queue string) error
 

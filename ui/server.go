@@ -114,10 +114,12 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /tasks/{id}/delete", s.handleDeleteTask)
 	mux.HandleFunc("POST /dead/{queue}/retry-all", s.handleRetryAllDead)
 	mux.HandleFunc("POST /dead/{queue}/purge", s.handlePurgeDead)
+	mux.HandleFunc("POST /admin/cleanup-consumers", s.handleCleanupConsumers)
 
 	// HTMX partials
 	mux.HandleFunc("GET /partials/stats", s.handlePartialStats)
 	mux.HandleFunc("GET /partials/queues", s.handlePartialQueues)
+	mux.HandleFunc("GET /partials/consumers", s.handlePartialConsumers)
 	mux.HandleFunc("GET /partials/tasks", s.handlePartialTasks)
 
 	s.server = &http.Server{
@@ -327,6 +329,9 @@ func buildQueryParams(filter store.TaskFilter) string {
 	for _, s := range filter.States {
 		params += "&states=" + s
 	}
+	if filter.Limit > 0 && filter.Limit != 20 {
+		params += "&limit=" + strconv.Itoa(filter.Limit)
+	}
 	return params
 }
 
@@ -367,10 +372,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Collect all consumer groups across all queues
-	groupsMap := make(map[string]*struct {
-		Name          string
-		ConsumerCount int
-	})
+	groupsMap := make(map[string]map[string]bool) // group name -> consumer names
 
 	for _, queue := range queues {
 		groups, err := s.broker.GetConsumerGroups(ctx, queue)
@@ -378,16 +380,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, group := range groups {
-			if _, exists := groupsMap[group.Name]; !exists {
-				// Get consumers for this group (use first queue that has this group)
-				consumers, _ := s.broker.GetGroupConsumers(ctx, queue, group.Name)
-				groupsMap[group.Name] = &struct {
-					Name          string
-					ConsumerCount int
-				}{
-					Name:          group.Name,
-					ConsumerCount: len(consumers),
-				}
+			if groupsMap[group.Name] == nil {
+				groupsMap[group.Name] = make(map[string]bool)
+			}
+			// Track unique consumers across all queues for this group
+			consumers, _ := s.broker.GetGroupConsumers(ctx, queue, group.Name)
+			for _, c := range consumers {
+				groupsMap[group.Name][c.Name] = true
 			}
 		}
 	}
@@ -398,10 +397,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		ConsumerCount int
 	}
 	var consumerGroups []ConsumerGroupSummary
-	for _, g := range groupsMap {
+	for groupName, consumerNames := range groupsMap {
 		consumerGroups = append(consumerGroups, ConsumerGroupSummary{
-			Name:          g.Name,
-			ConsumerCount: g.ConsumerCount,
+			Name:          groupName,
+			ConsumerCount: len(consumerNames),
 		})
 	}
 
@@ -430,31 +429,50 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Get consumers for this group (from first queue)
-		if len(queues) > 0 {
-			consumerList, _ := s.broker.GetGroupConsumers(ctx, queues[0], selectedGroup)
-			for _, c := range consumerList {
-				status := "🟢 Active"
-				statusClass := "bg-green-900/30 text-green-400"
-
-				// Determine status based on idle time
-				idleSeconds := c.Idle / 1000
-				if idleSeconds > 300 { // > 5 minutes
-					status = "🔴 Dead"
-					statusClass = "bg-red-900/30 text-red-400"
-				} else if idleSeconds > 60 { // > 1 minute
-					status = "🟡 Idle"
-					statusClass = "bg-yellow-900/30 text-yellow-400"
-				}
-
-				consumers = append(consumers, ConsumerDisplay{
-					Name:        c.Name,
-					Pending:     c.Pending,
-					IdleTime:    s.formatIdleTime(c.Idle),
-					Status:      status,
-					StatusClass: statusClass,
-				})
+		// Get consumers for this group from all queues
+		consumersMap := make(map[string]types.ConsumerInfo)
+		for _, queue := range queues {
+			consumerList, err := s.broker.GetGroupConsumers(ctx, queue, selectedGroup)
+			if err != nil {
+				continue
 			}
+			for _, c := range consumerList {
+				if existing, found := consumersMap[c.Name]; !found {
+					// First time seeing this consumer
+					consumersMap[c.Name] = *c
+				} else {
+					// Aggregate: use least idle time and sum pending tasks
+					if c.Idle < existing.Idle {
+						existing.Idle = c.Idle
+					}
+					existing.Pending += c.Pending
+					consumersMap[c.Name] = existing
+				}
+			}
+		}
+
+		// Convert to display format
+		for _, c := range consumersMap {
+			status := "🟢 Active"
+			statusClass := "bg-green-900/30 text-green-400"
+
+			// Determine status based on idle time
+			idleSeconds := c.Idle / 1000
+			if idleSeconds > 600 { // > 10 minutes
+				status = "🔴 Dead"
+				statusClass = "bg-red-900/30 text-red-400"
+			} else if idleSeconds > 60 { // > 1 minute
+				status = "🟡 Idle"
+				statusClass = "bg-yellow-900/30 text-yellow-400"
+			}
+
+			consumers = append(consumers, ConsumerDisplay{
+				Name:        c.Name,
+				Pending:     c.Pending,
+				IdleTime:    s.formatIdleTime(c.Idle),
+				Status:      status,
+				StatusClass: statusClass,
+			})
 		}
 	}
 
@@ -600,7 +618,18 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 		Search:    r.URL.Query().Get("search"),
 		SortBy:    r.URL.Query().Get("sort"),
 		SortOrder: r.URL.Query().Get("order"),
-		Limit:     50,
+		Limit:     20, // default
+	}
+
+	// Parse limit with validation
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			// Limit between 1 and 100
+			if limit > 100 {
+				limit = 100
+			}
+			filter.Limit = limit
+		}
 	}
 
 	// Backwards compatibility: single state param
@@ -636,6 +665,12 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 		"TotalPages":  totalPages,
 		"Filter":      filter,
 		"Queues":      queues,
+	}
+
+	// If HTMX request, render only the table partial
+	if r.Header.Get("HX-Request") == "true" {
+		s.render(w, "tasks_table.html", data)
+		return
 	}
 
 	s.render(w, "layout.html", data)
@@ -839,6 +874,100 @@ func (s *Server) handlePurgeDead(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<span class="text-green-600">✅ DLQ purged</span>`)
 }
 
+func (s *Server) handleCleanupConsumers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	threshold := 10 * time.Minute // Manual cleanup threshold matching UI display
+
+	// Get selected group from query param or form
+	selectedGroup := r.URL.Query().Get("group")
+	if selectedGroup == "" {
+		selectedGroup = r.FormValue("group")
+	}
+
+	queues, err := s.broker.GetQueues(ctx)
+	if err != nil {
+		s.error(w, "Failed to get queues", err, http.StatusInternalServerError)
+		return
+	}
+
+	var totalRemoved int
+	var removedDetails []string
+
+	for _, queue := range queues {
+		groups, err := s.broker.GetConsumerGroups(ctx, queue)
+		if err != nil {
+			continue
+		}
+
+		for _, group := range groups {
+			// Skip if not the selected group
+			if selectedGroup != "" && group.Name != selectedGroup {
+				continue
+			}
+			consumers, err := s.broker.GetGroupConsumers(ctx, queue, group.Name)
+			if err != nil {
+				continue
+			}
+
+			for _, c := range consumers {
+				// Safety checks: only remove if no pending tasks and idle > threshold
+				shouldCleanup := c.Pending == 0 && c.Idle > int64(threshold.Milliseconds())
+
+				if shouldCleanup {
+					err := s.broker.RemoveConsumer(ctx, queue, group.Name, c.Name)
+					if err != nil {
+						s.logger.Error("failed to remove consumer",
+							"queue", queue,
+							"group", group.Name,
+							"consumer", c.Name,
+							"error", err)
+						continue
+					}
+
+					totalRemoved++
+					removedDetails = append(removedDetails, fmt.Sprintf("%s/%s/%s", queue, group.Name, c.Name))
+					s.logger.Info("manually removed dead consumer",
+						"queue", queue,
+						"group", group.Name,
+						"consumer", c.Name,
+						"idle_minutes", c.Idle/60000)
+				}
+			}
+		}
+	}
+
+	// Count skipped consumers with pending tasks
+	skippedWithPending := 0
+	for _, queue := range queues {
+		groups, _ := s.broker.GetConsumerGroups(ctx, queue)
+		for _, group := range groups {
+			if selectedGroup != "" && group.Name != selectedGroup {
+				continue
+			}
+			consumers, _ := s.broker.GetGroupConsumers(ctx, queue, group.Name)
+			for _, c := range consumers {
+				idleMinutes := float64(c.Idle) / 60000.0
+				if c.Pending > 0 && idleMinutes > 10 {
+					skippedWithPending++
+				}
+			}
+		}
+	}
+
+	w.Header().Set("HX-Trigger", "refresh")
+	if totalRemoved > 0 {
+		fmt.Fprintf(w, `<div class="text-sm"><span class="text-green-400 font-medium">✅ Removed %d dead consumer(s)</span>`, totalRemoved)
+		if skippedWithPending > 0 {
+			fmt.Fprintf(w, `<br><span class="text-amber-400 mt-1 block">⚠️ Skipped %d dead consumer(s) with pending tasks (use XAUTOCLAIM to recover)</span>`, skippedWithPending)
+		}
+		fmt.Fprintf(w, `</div>`)
+	} else if skippedWithPending > 0 {
+		fmt.Fprintf(w, `<div class="text-sm"><span class="text-amber-400">⚠️ Found %d dead consumer(s) but they have pending tasks in PEL</span><br><span class="text-gray-400 text-xs mt-1 block">Wait for crash recovery (XAUTOCLAIM) to claim these tasks, then cleanup will work</span></div>`, skippedWithPending)
+	} else {
+		fmt.Fprintf(w, `<span class="text-gray-400 text-sm">✓ No dead consumers to remove</span>`)
+	}
+}
+
 // HTMX partial handlers
 
 func (s *Server) handlePartialStats(w http.ResponseWriter, r *http.Request) {
@@ -857,28 +986,148 @@ func (s *Server) handlePartialStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePartialQueues(w http.ResponseWriter, r *http.Request) {
-	queues, err := s.broker.GetQueues(r.Context())
+	ctx := r.Context()
+	selectedGroup := r.URL.Query().Get("group")
+
+	queues, err := s.broker.GetQueues(ctx)
 	if err != nil {
 		fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
 		return
 	}
 
-	queueInfos := make([]map[string]interface{}, 0, len(queues))
-	for _, q := range queues {
-		info, err := s.broker.GetQueueInfo(r.Context(), q)
-		if err != nil {
-			continue
+	var queueInfos []map[string]interface{}
+	if selectedGroup != "" {
+		// Get queue info for selected group
+		for _, queue := range queues {
+			queueInfo := s.getQueueInfoForGroup(ctx, queue, selectedGroup)
+			if queueInfo != nil {
+				queueInfos = append(queueInfos, queueInfo)
+			}
 		}
-		queueInfos = append(queueInfos, map[string]interface{}{
-			"Name":      info.Name,
-			"Pending":   info.Pending,
-			"Active":    info.Active,
-			"Dead":      info.Dead,
-			"Processed": info.Processed,
-		})
+	} else {
+		// Get all queue infos
+		for _, q := range queues {
+			info, err := s.broker.GetQueueInfo(ctx, q)
+			if err != nil {
+				continue
+			}
+			queueInfos = append(queueInfos, map[string]interface{}{
+				"Name":      info.Name,
+				"Pending":   info.Pending,
+				"Active":    info.Active,
+				"Dead":      info.Dead,
+				"Processed": info.Processed,
+			})
+		}
+	}
+
+	if len(queueInfos) == 0 {
+		fmt.Fprint(w, `<div class="p-8 text-center">
+			<div class="text-gray-600 mb-2">📭</div>
+			<p class="text-gray-500 text-sm">No queues found for this consumer group</p>
+			<p class="text-gray-600 text-xs mt-1">Try selecting a different group from the dropdown above</p>
+		</div>`)
+		return
 	}
 
 	s.tmpl.ExecuteTemplate(w, "partial_queues.html", queueInfos)
+}
+
+func (s *Server) handlePartialConsumers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	selectedGroup := r.URL.Query().Get("group")
+
+	if selectedGroup == "" {
+		fmt.Fprint(w, `<div class="text-gray-500 text-sm">No consumer group selected</div>`)
+		return
+	}
+
+	queues, err := s.broker.GetQueues(ctx)
+	if err != nil {
+		fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
+		return
+	}
+
+	// Get consumers for this group from all queues
+	type ConsumerDisplay struct {
+		Name        string
+		Pending     int64
+		IdleTime    string
+		Status      string
+		StatusClass string
+	}
+
+	consumersMap := make(map[string]types.ConsumerInfo)
+	for _, queue := range queues {
+		consumerList, err := s.broker.GetGroupConsumers(ctx, queue, selectedGroup)
+		if err != nil {
+			continue
+		}
+		for _, c := range consumerList {
+			if existing, found := consumersMap[c.Name]; !found {
+				// First time seeing this consumer
+				consumersMap[c.Name] = *c
+			} else {
+				// Aggregate: use least idle time and sum pending tasks
+				if c.Idle < existing.Idle {
+					existing.Idle = c.Idle
+				}
+				existing.Pending += c.Pending
+				consumersMap[c.Name] = existing
+			}
+		}
+	}
+
+	// Convert to display format
+	var consumers []ConsumerDisplay
+	for _, c := range consumersMap {
+		status := "🟢 Active"
+		statusClass := "bg-green-900/30 text-green-400"
+
+		// Determine status based on idle time
+		idleSeconds := c.Idle / 1000
+		if idleSeconds > 600 { // > 10 minutes
+			status = "🔴 Dead"
+			statusClass = "bg-red-900/30 text-red-400"
+		} else if idleSeconds > 60 { // > 1 minute
+			status = "🟡 Idle"
+			statusClass = "bg-yellow-900/30 text-yellow-400"
+		}
+
+		consumers = append(consumers, ConsumerDisplay{
+			Name:        c.Name,
+			Pending:     c.Pending,
+			IdleTime:    s.formatIdleTime(c.Idle),
+			Status:      status,
+			StatusClass: statusClass,
+		})
+	}
+
+	// Render consumers
+	for _, consumer := range consumers {
+		fmt.Fprintf(w, `<div class="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800/70 transition-colors">
+			<div class="flex items-center gap-3 flex-1">
+				<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs %s font-medium">%s</span>
+				<span class="text-sm font-mono text-strego-400">%s</span>
+			</div>
+			<div class="flex items-center gap-4 text-xs">
+				<div class="flex items-center gap-1.5">
+					<span class="text-gray-400">Pending in PEL: <span class="text-yellow-400 font-medium">%d</span></span>
+					<div class="relative inline-flex items-center group">
+						<svg class="w-3.5 h-3.5 text-gray-600 hover:text-gray-400 cursor-help" fill="currentColor" viewBox="0 0 20 20">
+							<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+						</svg>
+						<div class="absolute top-full left-1/2 -translate-x-1/2 mt-2 hidden group-hover:block z-50">
+							<div class="bg-gray-800 text-white text-xs rounded py-1.5 px-2 w-48 shadow-xl border border-gray-700 whitespace-nowrap">
+								PEL = Pending Entries List (UNACKED tasks in Redis)
+							</div>
+						</div>
+					</div>
+				</div>
+				<span class="text-gray-400">Idle Time: <span class="text-gray-300 font-medium">%s</span></span>
+			</div>
+		</div>`, consumer.StatusClass, consumer.Status, consumer.Name, consumer.Pending, consumer.IdleTime)
+	}
 }
 
 func (s *Server) handlePartialTasks(w http.ResponseWriter, r *http.Request) {

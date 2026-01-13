@@ -93,7 +93,8 @@ func main() {
 		strego.WithServerLogger(logger),
 		strego.WithShutdownTimeout(30*time.Second),
 		strego.WithProcessedTTL(24*time.Hour),
-		strego.WithRetryConfig(2*time.Second, 30*time.Second), // Fast retry for demo
+		strego.WithRetryConfig(2*time.Second, 30*time.Second),      // Fast retry for demo
+		strego.WithConsumerCleanup(10*time.Minute, 60*time.Minute), // Auto-cleanup dead consumers
 	)
 
 	// ============================================

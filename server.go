@@ -52,6 +52,11 @@ type Server struct {
 	retryBaseDuration time.Duration
 	retryMaxDuration  time.Duration
 
+	// Consumer cleanup (optional)
+	enableConsumerCleanup bool
+	cleanupInterval       time.Duration
+	cleanupIdleThreshold  time.Duration
+
 	// State
 	mu       sync.Mutex
 	running  bool
@@ -97,6 +102,18 @@ func WithServerLogger(logger Logger) ServerOption {
 func WithShutdownTimeout(d time.Duration) ServerOption {
 	return func(s *Server) {
 		s.shutdownTimeout = d
+	}
+}
+
+// WithConsumerCleanup enables automatic cleanup of dead consumers.
+// This prevents consumer list bloat from frequent deployments.
+// interval: how often to check for dead consumers (e.g., 10 minutes)
+// threshold: min idle time before removal (e.g., 30 minutes)
+func WithConsumerCleanup(interval, threshold time.Duration) ServerOption {
+	return func(s *Server) {
+		s.enableConsumerCleanup = true
+		s.cleanupInterval = interval
+		s.cleanupIdleThreshold = threshold
 	}
 }
 
@@ -177,6 +194,12 @@ func (s *Server) Start() error {
 	// Start the scheduler for scheduled and retry tasks
 	s.wg.Add(1)
 	go s.runScheduler(ctx)
+
+	// Start consumer cleanup if enabled
+	if s.enableConsumerCleanup {
+		s.wg.Add(1)
+		go s.runConsumerCleanup(ctx)
+	}
 
 	// Setup signal handling
 	sigCh := make(chan os.Signal, 1)
@@ -434,6 +457,96 @@ func (s *Server) runScheduler(ctx context.Context) {
 			s.processScheduled(ctx)
 			s.processRetries(ctx)
 		}
+	}
+}
+
+// runConsumerCleanup periodically cleans up dead consumers from the consumer group.
+func (s *Server) runConsumerCleanup(ctx context.Context) {
+	defer s.wg.Done()
+
+	interval := s.cleanupInterval
+	if interval == 0 {
+		interval = 10 * time.Minute // default
+	}
+
+	threshold := s.cleanupIdleThreshold
+	if threshold == 0 {
+		threshold = 60 * time.Minute // default: 60 minutes (safe threshold)
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"interval_minutes":  interval.Minutes(),
+		"threshold_minutes": threshold.Minutes(),
+	}).Info("consumer cleanup started")
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("consumer cleanup stopped")
+			return
+		case <-ticker.C:
+			s.cleanupDeadConsumers(ctx, threshold)
+		}
+	}
+}
+
+// cleanupDeadConsumers removes consumers that have been idle for too long with no pending tasks.
+func (s *Server) cleanupDeadConsumers(ctx context.Context, idleThreshold time.Duration) {
+	var totalRemoved int
+
+	// Only cleanup consumers in queues we're processing
+	for _, queue := range s.queues {
+		// Get consumer groups for this queue
+		groups, err := s.broker.GetConsumerGroups(ctx, queue)
+		if err != nil {
+			continue
+		}
+
+		// Find our consumer group
+		for _, group := range groups {
+			consumers, err := s.broker.GetGroupConsumers(ctx, queue, group.Name)
+			if err != nil {
+				continue
+			}
+
+			for _, c := range consumers {
+				// Skip ourselves
+				if c.Name == s.workerID {
+					continue
+				}
+
+				// Safety checks: only remove if no pending tasks and idle > threshold
+				shouldCleanup := c.Pending == 0 &&
+					c.Idle > int64(idleThreshold.Milliseconds())
+
+				if shouldCleanup {
+					err := s.broker.RemoveConsumer(ctx, queue, group.Name, c.Name)
+					if err != nil {
+						s.logger.WithError(err).WithFields(logrus.Fields{
+							"queue":    queue,
+							"group":    group.Name,
+							"consumer": c.Name,
+						}).Error("failed to remove consumer")
+						continue
+					}
+
+					totalRemoved++
+					s.logger.WithFields(logrus.Fields{
+						"queue":        queue,
+						"group":        group.Name,
+						"consumer":     c.Name,
+						"idle_minutes": c.Idle / 60000,
+					}).Info("removed dead consumer")
+				}
+			}
+		}
+	}
+
+	if totalRemoved > 0 {
+		s.logger.WithField("removed_count", totalRemoved).Info("consumer cleanup completed")
 	}
 }
 

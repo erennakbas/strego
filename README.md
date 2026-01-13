@@ -202,6 +202,7 @@ server := strego.NewServer(b,
     strego.WithProcessedTTL(24*time.Hour),         // Idempotency TTL
     strego.WithRetryConfig(1*time.Second, 10*time.Minute), // Backoff config
     strego.WithServerStore(pgStore),               // Optional PostgreSQL
+    strego.WithConsumerCleanup(10*time.Minute, 60*time.Minute), // Auto-cleanup dead consumers
     strego.WithServerLogger(logger),               // Logger
 )
 ```

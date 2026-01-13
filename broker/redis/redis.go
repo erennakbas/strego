@@ -703,6 +703,13 @@ func (b *Broker) GetGroupConsumers(ctx context.Context, queue, group string) ([]
 	return result, nil
 }
 
+// RemoveConsumer removes a consumer from a consumer group.
+// This is safe to call when the consumer has no pending tasks.
+func (b *Broker) RemoveConsumer(ctx context.Context, queue, group, consumer string) error {
+	streamKey := b.streamKey(queue)
+	return b.client.XGroupDelConsumer(ctx, streamKey, group, consumer).Err()
+}
+
 // PurgeQueue removes all tasks from a queue
 func (b *Broker) PurgeQueue(ctx context.Context, queue string) error {
 	// Delete the stream

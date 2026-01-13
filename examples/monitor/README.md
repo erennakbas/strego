@@ -294,6 +294,7 @@ CONSUMER_GROUP=my-app go run examples/crash-recovery/main.go
 - **Refresh the page** to see latest stats (auto-refresh coming soon)
 - **Multiple workers** all show up in the same queue stats (if using same consumer group)
 - **🔴 Dead workers** remain visible if they have pending tasks in PEL - these will auto-recover
+- **🧹 Manual Cleanup** - Click the "Cleanup" button in Workers section to manually remove dead consumers (idle > 30 min, pending = 0)
 - **Collapsible sections** help when you have many workers/queues - just click the header
 - **Port conflict?** Change `:8080` to another port in `main.go`
 - **No data?** Check these:

@@ -1,8 +1,44 @@
 {{define "dashboard.html"}}
-<div class="space-y-6">
+<div x-data="{ 
+    lastRefresh: new Date(),
+    refreshInterval: null,
+    formatTime(date) {
+        return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    },
+    startAutoRefresh() {
+        this.refreshInterval = setInterval(() => {
+            htmx.trigger('#dashboard-content', 'refresh');
+        }, 30000);
+    },
+    manualRefresh() {
+        htmx.trigger('#dashboard-content', 'refresh');
+    }
+}" x-init="startAutoRefresh()">
+    
     <div class="flex items-center justify-between">
         <div>
+            <div class="flex items-center gap-3">
         <h2 class="text-2xl font-bold">Dashboard</h2>
+                <!-- Mini Auto-refresh Indicator -->
+                <div class="flex items-center gap-2 text-xs">
+                    <button 
+                        @click="manualRefresh()"
+                        title="Refresh now (auto-refresh: 30s)"
+                        class="p-1.5 rounded-md hover:bg-gray-800 transition-colors group">
+                        <div class="relative flex items-center justify-center">
+                            <svg class="w-3.5 h-3.5 text-gray-500 group-hover:text-emerald-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                            <span id="refresh-spinner" class="htmx-indicator absolute inset-0 flex items-center justify-center">
+                                <svg class="w-3.5 h-3.5 text-emerald-400 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                </svg>
+                            </span>
+                        </div>
+                    </button>
+                    <span class="text-gray-500 font-mono" x-text="formatTime(lastRefresh)"></span>
+                </div>
+            </div>
             <p class="text-xs text-gray-500 mt-1.5 flex items-center gap-3">
                 <span class="inline-flex items-center gap-1.5">
                     <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
@@ -38,79 +74,28 @@
                 No active consumer groups
             </div>
             {{end}}
-        <div class="flex items-center gap-3 text-sm" id="refresh-controls"
-             x-data="{ 
-                lastUpdated: new Date(),
-                isPaused: false,
-                toggleAutoRefresh() {
-                    this.isPaused = !this.isPaused;
-                    if (this.isPaused) {
-                        document.getElementById('stats')?.setAttribute('hx-trigger', 'manualRefresh');
-                        document.getElementById('queues-content')?.setAttribute('hx-trigger', 'manualRefresh');
-                        document.getElementById('consumers-content')?.setAttribute('hx-trigger', 'manualRefresh');
-                    } else {
-                        document.getElementById('stats')?.setAttribute('hx-trigger', 'load, every 30s, manualRefresh');
-                        document.getElementById('queues-content')?.setAttribute('hx-trigger', 'load, every 30s, manualRefresh');
-                        document.getElementById('consumers-content')?.setAttribute('hx-trigger', 'load, every 30s, manualRefresh');
-                    }
-                    htmx.process(document.body);
-                },
-                init() {
-                    window.updateDashboardTime = () => {
-                        this.lastUpdated = new Date();
-                    };
-                }
-             }">
-            <!-- Auto-refresh indicator -->
-            <div class="flex items-center gap-2 text-gray-500">
-                <span id="refresh-indicator" class="htmx-indicator">
-                    <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                </span>
-                <span class="flex items-center gap-1.5">
-                    <span class="w-1.5 h-1.5 rounded-full transition-colors" :class="isPaused ? 'bg-gray-500' : 'bg-green-500 animate-pulse'"></span>
-                    <span>Auto-refresh: 30s</span>
-                </span>
-            </div>
-            
-            <!-- Pause/Play button -->
-            <button 
-                @click="toggleAutoRefresh()"
-                class="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg transition-all border border-gray-700 hover:border-gray-600"
-                :title="isPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'">
-                <!-- Play icon (when paused) -->
-                <svg x-show="isPaused" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z"/>
+        <div class="flex items-center gap-2 text-sm text-gray-500">
+            <span class="htmx-indicator">
+                <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <!-- Pause icon (when playing) -->
-                <svg x-show="!isPaused" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
-                </svg>
-            </button>
-            
-            <!-- Manual refresh button -->
-            <button 
-                @click="htmx.trigger('#stats', 'manualRefresh'); htmx.trigger('#queues-content', 'manualRefresh'); htmx.trigger('#consumers-content', 'manualRefresh'); lastUpdated = new Date();"
-                class="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg transition-all border border-gray-700 hover:border-gray-600"
-                title="Refresh now">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                </svg>
-            </button>
-            
-            <!-- Last updated timestamp -->
-            <div class="flex items-center gap-1 text-[11px] text-gray-600">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
-                <span x-text="lastUpdated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })">--:--:--</span>
-            </div>
-            </div>
+            </span>
+            <span>Auto-refresh: 5s</span>
+        </div>
         </div>
     </div>
-
+    
+    <!-- Dashboard Content - Auto-refreshable -->
+    <div id="dashboard-content" 
+         hx-get="/?group={{.SelectedGroup}}" 
+         hx-trigger="refresh"
+         hx-swap="innerHTML"
+         hx-select="#dashboard-content > *"
+         @htmx:after-swap="lastRefresh = new Date()"
+         hx-indicator="#refresh-spinner"
+         class="space-y-6">
+         
     <!-- Stats Cards (PostgreSQL) -->
         {{if .Stats}}
     <div class="bg-gray-900 rounded-xl border border-gray-800" x-data="{ expanded: true }">
@@ -162,11 +147,7 @@
             </svg>
         </div>
         <div class="p-4" x-show="expanded" x-transition>
-            <div id="stats" 
-                 hx-get="/partials/stats" 
-                 hx-trigger="load, every 30s, manualRefresh" 
-                 hx-swap="innerHTML"
-                 hx-indicator="#refresh-indicator">
+            <div id="stats" hx-get="/partials/stats" hx-trigger="load, every 5s" hx-swap="innerHTML">
             {{template "partial_stats.html" .Stats}}
             </div>
         </div>
@@ -197,11 +178,11 @@
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <span class="text-yellow-400">🟡 Idle:</span>
-                                    <span class="text-gray-300">Idle 1-5 minutes</span>
+                                    <span class="text-gray-300">Idle 1-10 minutes</span>
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <span class="text-red-400">🔴 Dead:</span>
-                                    <span class="text-gray-300">Idle &gt; 5 minutes</span>
+                                    <span class="text-gray-300">Idle &gt; 10 minutes</span>
                                 </div>
                             </div>
                             <div class="mt-2 pt-2 border-t border-gray-700 text-gray-400 text-xs">
@@ -221,24 +202,11 @@
                         <span id="cleanup-indicator" class="htmx-indicator">
                             <svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
                         </span>
                         🧹 Cleanup
                     </button>
-                    <div class="relative inline-flex items-center group">
-                        <svg class="w-5 h-5 text-gray-400 hover:text-gray-200 cursor-help transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                        <div class="absolute top-full mt-2 right-0 w-80 bg-gray-800 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                            <div class="font-semibold text-white mb-1.5">Manual Consumer Cleanup</div>
-                            <div class="space-y-1.5">
-                                <p>Removes dead Redis consumer entries from the selected consumer group.</p>
-                                <p class="text-gray-400"><span class="text-red-400 font-medium">Manual Criteria:</span> Pending = 0 tasks AND Idle > 10 minutes</p>
-                                <p class="text-amber-400 text-[11px] italic">Note: If enabled on workers, server-side auto-cleanup runs periodically with a more conservative threshold.</p>
-                            </div>
-                        </div>
-                    </div>
 
                     <!-- Cleanup Confirmation Modal -->
                     <div x-show="showCleanupModal" 
@@ -303,26 +271,36 @@
                             </div>
 
                             <!-- Footer -->
-                            <div class="px-6 py-4 bg-gray-800/30 border-t border-gray-700">
-                                <div id="cleanup-result" class="mb-3"></div>
-                                <div class="flex items-center justify-end gap-3">
-                                    <button 
-                                        @click="showCleanupModal = false"
-                                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium transition-colors">
-                                        Cancel
-                                    </button>
-                                    <button 
-                                        hx-post="/admin/cleanup-consumers?group={{.SelectedGroup}}"
-                                        hx-swap="innerHTML"
-                                        hx-target="#cleanup-result"
-                                        hx-indicator="#cleanup-indicator"
-                                        class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium transition-all hover:shadow-lg hover:shadow-red-500/20 flex items-center gap-2">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                        </svg>
-                                        Cleanup Now
-                                    </button>
-                                </div>
+                            <div class="px-6 py-4 bg-gray-800/30 border-t border-gray-700 flex items-center justify-end gap-3">
+                                <button 
+                                    @click="showCleanupModal = false"
+                                    class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium transition-colors">
+                                    Cancel
+                                </button>
+                                <button 
+                                    hx-post="/admin/cleanup-consumers"
+                                    hx-swap="none"
+                                    hx-indicator="#cleanup-indicator"
+                                    @click="showCleanupModal = false"
+                                    class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium transition-all hover:shadow-lg hover:shadow-red-500/20 flex items-center gap-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                    </svg>
+                                    Cleanup Now
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="relative inline-flex items-center group">
+                        <svg class="w-5 h-5 text-gray-400 hover:text-gray-200 cursor-help transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <div class="absolute top-full mt-2 right-0 w-80 bg-gray-800 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                            <div class="font-semibold text-white mb-1.5">Manual Consumer Cleanup</div>
+                            <div class="space-y-1.5">
+                                <p>Removes dead Redis consumer entries from the selected consumer group.</p>
+                                <p class="text-gray-400"><span class="text-red-400 font-medium">Manual Criteria:</span> Pending = 0 tasks AND Idle > 10 minutes</p>
+                                <p class="text-amber-400 text-[11px] italic">Note: If enabled on workers, server-side auto-cleanup runs periodically with a more conservative threshold.</p>
                             </div>
                         </div>
                     </div>
@@ -333,41 +311,32 @@
             </div>
         </div>
         <div class="p-4 space-y-2" x-show="expanded" x-transition>
-            <div id="consumers-content" 
-                 class="space-y-2" 
-                 hx-get="/partials/consumers?group={{.SelectedGroup}}" 
-                 hx-trigger="load, every 30s, manualRefresh" 
-                 hx-swap="innerHTML"
-                 hx-indicator="#refresh-indicator">
-            {{if .Consumers}}
-                {{range .Consumers}}
-                <div class="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800/70 transition-colors">
-                    <div class="flex items-center gap-3 flex-1">
-                        <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs {{.StatusClass}} font-medium">
-                            {{.Status}}
-                        </span>
-                        <span class="text-sm font-mono text-strego-400">{{.Name}}</span>
-                    </div>
-                    <div class="flex items-center gap-4 text-xs">
-                        <div class="flex items-center gap-1.5">
-                            <span class="text-gray-400">Pending in PEL: <span class="text-yellow-400 font-medium">{{.Pending}}</span></span>
-                            <div class="relative inline-flex items-center group">
-                                <svg class="w-3.5 h-3.5 text-gray-600 hover:text-gray-400 cursor-help" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
-                                </svg>
-                                <div class="absolute top-full left-1/2 -translate-x-1/2 mt-2 hidden group-hover:block z-50">
-                                    <div class="bg-gray-800 text-white text-xs rounded py-1.5 px-2 w-48 shadow-xl border border-gray-700 whitespace-nowrap">
-                                        PEL = Pending Entries List (UNACKED tasks in Redis)
-                                    </div>
+            {{range .Consumers}}
+            <div class="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800/70 transition-colors">
+                <div class="flex items-center gap-3 flex-1">
+                    <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs {{.StatusClass}} font-medium">
+                        {{.Status}}
+                    </span>
+                    <span class="text-sm font-mono text-strego-400">{{.Name}}</span>
+                </div>
+                <div class="flex items-center gap-4 text-xs">
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-gray-400">Pending in PEL: <span class="text-yellow-400 font-medium">{{.Pending}}</span></span>
+                        <div class="relative inline-flex items-center group">
+                            <svg class="w-3.5 h-3.5 text-gray-600 hover:text-gray-400 cursor-help" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                            </svg>
+                            <div class="absolute top-full left-1/2 -translate-x-1/2 mt-2 hidden group-hover:block z-50">
+                                <div class="bg-gray-800 text-white text-xs rounded py-1.5 px-2 w-48 shadow-xl border border-gray-700 whitespace-nowrap">
+                                    PEL = Pending Entries List (UNACKED tasks in Redis)
                                 </div>
                             </div>
                         </div>
-                        <span class="text-gray-400">Idle Time: <span class="text-gray-300 font-medium">{{.IdleTime}}</span></span>
                     </div>
+                    <span class="text-gray-400">Idle Time: <span class="text-gray-300 font-medium">{{.IdleTime}}</span></span>
                 </div>
-                {{end}}
-            {{end}}
             </div>
+        {{end}}
     </div>
     </div>
     {{end}}
@@ -421,11 +390,6 @@
             </div>
         </div>
         <div id="queues" x-show="expanded" x-transition>
-            <div id="queues-content" 
-                 hx-get="/partials/queues?group={{.SelectedGroup}}" 
-                 hx-trigger="load, every 30s, manualRefresh" 
-                 hx-swap="innerHTML"
-                 hx-indicator="#refresh-indicator">
             {{if .Queues}}
                 {{template "partial_queues.html" .Queues}}
             {{else}}
@@ -435,19 +399,9 @@
                     <p class="text-gray-600 text-xs mt-1">Try selecting a different group from the dropdown above</p>
                 </div>
             {{end}}
-            </div>
         </div>
     </div>
 </div>
-
-<script>
-document.body.addEventListener('htmx:afterSwap', function(event) {
-    // Update timestamp via global function
-    if (typeof window.updateDashboardTime === 'function') {
-        window.updateDashboardTime();
-    }
-});
-</script>
 {{end}}
 
 {{define "partial_stats.html"}}
@@ -491,17 +445,19 @@ document.body.addEventListener('htmx:afterSwap', function(event) {
                 <span class="text-gray-400">{{.Active}} active</span>
             </div>
             <div class="flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                <span class="text-gray-400">{{.Processed}} completed</span>
-            </div>
-            <div class="flex items-center gap-2">
                 <span class="w-2 h-2 rounded-full bg-red-500"></span>
                 <span class="text-gray-400">{{.Dead}} dead</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                <span class="text-gray-400">{{.Processed}} completed</span>
             </div>
         </div>
     </div>
     {{else}}
     <div class="p-4 text-gray-500 text-sm">No queues found</div>
     {{end}}
-</div>
+    
+    </div><!-- #dashboard-content -->
+</div><!-- Dashboard wrapper -->
 {{end}}
