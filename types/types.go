@@ -76,15 +76,16 @@ type TaskOptions struct {
 
 // TaskMetadata contains runtime information about a task.
 type TaskMetadata struct {
-	State       TaskState  `json:"state,omitempty"`
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-	RetryCount  int32      `json:"retry_count,omitempty"`
-	LastError   string     `json:"last_error,omitempty"`
-	WorkerID    string     `json:"worker_id,omitempty"`
-	TraceID     string     `json:"trace_id,omitempty"`
-	StreamMsgID string     `json:"stream_msg_id,omitempty"`
+	State         TaskState  `json:"state,omitempty"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	RetryCount    int32      `json:"retry_count,omitempty"`
+	LastError     string     `json:"last_error,omitempty"`
+	WorkerID      string     `json:"worker_id,omitempty"`
+	ConsumerGroup string     `json:"consumer_group,omitempty"`
+	TraceID       string     `json:"trace_id,omitempty"`
+	StreamMsgID   string     `json:"stream_msg_id,omitempty"`
 }
 
 // TaskResult stores the outcome of task processing.

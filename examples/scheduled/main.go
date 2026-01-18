@@ -144,67 +144,119 @@ func enqueueScheduledTasks(ctx context.Context, client *strego.Client, logger *l
 	logger.WithField("current_time", now.Format("15:04:05")).Info("current time")
 
 	// ============================================
-	// IMMEDIATE TASK - runs right away
+	// IMMEDIATE TASKS - run right away
 	// ============================================
-	taskImmediate := strego.NewTaskFromBytes("reminder:send",
-		[]byte(`{"message": "IMMEDIATE - This runs right away!"}`),
-		strego.WithQueue("reminders"),
-	)
-	client.Enqueue(ctx, taskImmediate)
-	logger.WithField("runs_at", "NOW").Warn("[1] IMMEDIATE task enqueued")
+	for i := 1; i <= 5; i++ {
+		task := strego.NewTaskFromBytes("reminder:send",
+			[]byte(`{"message": "IMMEDIATE task", "index": `+string(rune('0'+i))+`}`),
+			strego.WithQueue("reminders"),
+		)
+		client.Enqueue(ctx, task)
+	}
+	logger.WithField("count", 5).Warn("[IMMEDIATE] 5 tasks enqueued - will run NOW")
 
 	// ============================================
-	// 15 SECONDS LATER
+	// WAVE 1: 10 seconds - Email batch
 	// ============================================
-	task15 := strego.NewTaskFromBytes("email:welcome",
-		[]byte(`{"message": "15 SECONDS - Delayed welcome email"}`),
-		strego.WithQueue("default"),
-		strego.WithProcessIn(15*time.Second),
-	)
-	info15, _ := client.Enqueue(ctx, task15)
-	logger.WithField("runs_at", info15.ProcessAt.Format("15:04:05")).Warn("[2] 15 SECONDS task scheduled")
+	for i := 1; i <= 10; i++ {
+		task := strego.NewTaskFromBytes("email:welcome",
+			[]byte(`{"email": "user`+string(rune('0'+i))+`@example.com", "wave": 1}`),
+			strego.WithQueue("default"),
+			strego.WithProcessIn(10*time.Second),
+		)
+		client.Enqueue(ctx, task)
+	}
+	logger.WithFields(logrus.Fields{
+		"count":   10,
+		"runs_at": now.Add(10 * time.Second).Format("15:04:05"),
+	}).Warn("[+10 sec] 10 welcome emails scheduled")
 
 	// ============================================
-	// 30 SECONDS LATER
+	// WAVE 2: 20 seconds - Reports batch
 	// ============================================
-	task30 := strego.NewTaskFromBytes("report:daily",
-		[]byte(`{"message": "30 SECONDS - Daily report generation"}`),
-		strego.WithQueue("reports"),
-		strego.WithProcessIn(30*time.Second),
-	)
-	info30, _ := client.Enqueue(ctx, task30)
-	logger.WithField("runs_at", info30.ProcessAt.Format("15:04:05")).Warn("[3] 30 SECONDS task scheduled")
+	for i := 1; i <= 5; i++ {
+		task := strego.NewTaskFromBytes("report:daily",
+			[]byte(`{"report_type": "daily", "department": `+string(rune('0'+i))+`}`),
+			strego.WithQueue("reports"),
+			strego.WithProcessIn(20*time.Second),
+		)
+		client.Enqueue(ctx, task)
+	}
+	logger.WithFields(logrus.Fields{
+		"count":   5,
+		"runs_at": now.Add(20 * time.Second).Format("15:04:05"),
+	}).Warn("[+20 sec] 5 daily reports scheduled")
 
 	// ============================================
-	// 45 SECONDS LATER
+	// WAVE 3: 30 seconds - Mixed batch
 	// ============================================
-	task45 := strego.NewTaskFromBytes("cleanup:old-data",
-		[]byte(`{"message": "45 SECONDS - Cleanup old data"}`),
-		strego.WithQueue("default"),
-		strego.WithProcessIn(45*time.Second),
-	)
-	info45, _ := client.Enqueue(ctx, task45)
-	logger.WithField("runs_at", info45.ProcessAt.Format("15:04:05")).Warn("[4] 45 SECONDS task scheduled")
+	for i := 1; i <= 8; i++ {
+		queue := "default"
+		taskType := "cleanup:old-data"
+		if i%2 == 0 {
+			queue = "reminders"
+			taskType = "reminder:send"
+		}
+		task := strego.NewTaskFromBytes(taskType,
+			[]byte(`{"batch": 3, "index": `+string(rune('0'+i))+`}`),
+			strego.WithQueue(queue),
+			strego.WithProcessIn(30*time.Second),
+		)
+		client.Enqueue(ctx, task)
+	}
+	logger.WithFields(logrus.Fields{
+		"count":   8,
+		"runs_at": now.Add(30 * time.Second).Format("15:04:05"),
+	}).Warn("[+30 sec] 8 mixed tasks scheduled (cleanup + reminders)")
 
 	// ============================================
-	// 60 SECONDS LATER (1 minute)
+	// WAVE 4: 45 seconds - Critical tasks
 	// ============================================
-	task60 := strego.NewTaskFromBytes("reminder:send",
-		[]byte(`{"message": "60 SECONDS - Final reminder after 1 minute"}`),
-		strego.WithQueue("reminders"),
-		strego.WithProcessIn(60*time.Second),
-	)
-	info60, _ := client.Enqueue(ctx, task60)
-	logger.WithField("runs_at", info60.ProcessAt.Format("15:04:05")).Warn("[5] 60 SECONDS (1 min) task scheduled")
+	for i := 1; i <= 3; i++ {
+		task := strego.NewTaskFromBytes("email:welcome",
+			[]byte(`{"email": "vip`+string(rune('0'+i))+`@example.com", "priority": "high"}`),
+			strego.WithQueue("default"),
+			strego.WithProcessIn(45*time.Second),
+			strego.WithMaxRetry(5),
+		)
+		client.Enqueue(ctx, task)
+	}
+	logger.WithFields(logrus.Fields{
+		"count":   3,
+		"runs_at": now.Add(45 * time.Second).Format("15:04:05"),
+	}).Warn("[+45 sec] 3 VIP emails scheduled")
 
+	// ============================================
+	// WAVE 5: 60 seconds - Final batch
+	// ============================================
+	for i := 1; i <= 5; i++ {
+		task := strego.NewTaskFromBytes("report:daily",
+			[]byte(`{"report_type": "final", "wave": 5}`),
+			strego.WithQueue("reports"),
+			strego.WithProcessIn(60*time.Second),
+		)
+		client.Enqueue(ctx, task)
+	}
+	logger.WithFields(logrus.Fields{
+		"count":   5,
+		"runs_at": now.Add(60 * time.Second).Format("15:04:05"),
+	}).Warn("[+60 sec] 5 final reports scheduled")
+
+	// ============================================
+	// SUMMARY
+	// ============================================
+	totalScheduled := 10 + 5 + 8 + 3 + 5
 	logger.Info("===========================================")
-	logger.Info("All tasks scheduled! Timeline:")
-	logger.Infof("  NOW        -> [1] IMMEDIATE")
-	logger.Infof("  +15 sec    -> [2] Welcome email")
-	logger.Infof("  +30 sec    -> [3] Daily report")
-	logger.Infof("  +45 sec    -> [4] Cleanup")
-	logger.Infof("  +60 sec    -> [5] Final reminder")
+	logger.Infof("TOTAL: %d scheduled + 5 immediate = %d tasks", totalScheduled, totalScheduled+5)
 	logger.Info("===========================================")
-	logger.Info("Watch the logs - tasks will execute at their scheduled times!")
+	logger.Info("Timeline:")
+	logger.Infof("  NOW        -> 5 immediate reminders")
+	logger.Infof("  +10 sec    -> 10 welcome emails")
+	logger.Infof("  +20 sec    -> 5 daily reports")
+	logger.Infof("  +30 sec    -> 8 mixed tasks")
+	logger.Infof("  +45 sec    -> 3 VIP emails")
+	logger.Infof("  +60 sec    -> 5 final reports")
+	logger.Info("===========================================")
+	logger.Info("Watch the logs - tasks execute at their scheduled times!")
 	logger.Info("Press Ctrl+C to exit")
 }

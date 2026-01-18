@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS strego_tasks (
     
     -- Worker information
     worker_id VARCHAR(255),
+    consumer_group VARCHAR(255),
     
     -- Tracing
     trace_id VARCHAR(64),
@@ -104,3 +105,4 @@ COMMENT ON COLUMN strego_tasks.max_retry IS 'Maximum retry attempts allowed';
 COMMENT ON COLUMN strego_tasks.priority IS 'Task priority (0-10, higher = more important)';
 COMMENT ON COLUMN strego_tasks.unique_key IS 'Unique key for task deduplication';
 COMMENT ON COLUMN strego_tasks.labels IS 'Custom labels for filtering and grouping';
+COMMENT ON COLUMN strego_tasks.consumer_group IS 'Consumer group that processed this task';

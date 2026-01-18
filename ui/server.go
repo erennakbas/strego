@@ -532,6 +532,8 @@ func (s *Server) getQueueInfoForGroup(ctx context.Context, queue, group string) 
 		"Name":      queue,
 		"Pending":   info.Pending,
 		"Active":    info.Active,
+		"Scheduled": info.Scheduled,
+		"Retry":     info.Retry,
 		"Dead":      info.Dead,
 		"Processed": info.Processed,
 	}
@@ -982,15 +984,55 @@ func (s *Server) handleCleanupConsumers(w http.ResponseWriter, r *http.Request) 
 // HTMX partial handlers
 
 func (s *Server) handlePartialStats(w http.ResponseWriter, r *http.Request) {
-	if s.store == nil {
-		_, _ = fmt.Fprint(w, `<div class="text-gray-500">Stats require PostgreSQL</div>`)
-		return
+	ctx := r.Context()
+
+	// Build stats from broker (Redis) if store is not available
+	var stats struct {
+		TotalTasks     int64
+		PendingTasks   int64
+		ActiveTasks    int64
+		CompletedTasks int64
+		FailedTasks    int64
+		DeadTasks      int64
+		RetryTasks     int64
+		ScheduledTasks int64
 	}
 
-	stats, err := s.store.GetStats(r.Context())
-	if err != nil {
-		_, _ = fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
-		return
+	// Get stats from store (PostgreSQL) if available
+	if s.store != nil {
+		storeStats, err := s.store.GetStats(ctx)
+		if err == nil {
+			stats.TotalTasks = storeStats.TotalTasks
+			stats.PendingTasks = storeStats.PendingTasks
+			stats.ActiveTasks = storeStats.ActiveTasks
+			stats.CompletedTasks = storeStats.CompletedTasks
+			stats.FailedTasks = storeStats.FailedTasks
+			stats.DeadTasks = storeStats.DeadTasks
+			stats.RetryTasks = storeStats.RetryTasks
+			stats.ScheduledTasks = storeStats.ScheduledTasks
+		}
+	}
+
+	// Always get scheduled/retry counts from Redis (real-time)
+	queues, err := s.broker.GetQueues(ctx)
+	if err == nil {
+		for _, queue := range queues {
+			scheduledCount, _ := s.broker.GetScheduledCount(ctx, queue)
+			retryCount, _ := s.broker.GetRetryCount(ctx, queue)
+			stats.ScheduledTasks += scheduledCount
+			stats.RetryTasks += retryCount
+
+			// If no store, also get pending/active/dead from broker
+			if s.store == nil {
+				queueInfo, err := s.broker.GetQueueInfo(ctx, queue)
+				if err == nil {
+					stats.PendingTasks += queueInfo.Pending
+					stats.ActiveTasks += queueInfo.Active
+					stats.DeadTasks += queueInfo.Dead
+					stats.CompletedTasks += queueInfo.Completed
+				}
+			}
+		}
 	}
 
 	_ = s.tmpl.ExecuteTemplate(w, "partial_stats.html", stats)
@@ -1026,6 +1068,8 @@ func (s *Server) handlePartialQueues(w http.ResponseWriter, r *http.Request) {
 				"Name":      info.Name,
 				"Pending":   info.Pending,
 				"Active":    info.Active,
+				"Scheduled": info.Scheduled,
+				"Retry":     info.Retry,
 				"Dead":      info.Dead,
 				"Processed": info.Processed,
 			})

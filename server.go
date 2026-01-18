@@ -310,6 +310,7 @@ func (s *Server) processTask(ctx context.Context, proto *types.TaskProto) error 
 	proto.Metadata.State = types.TaskStateActive
 	proto.Metadata.StartedAt = &now
 	proto.Metadata.WorkerID = s.workerID
+	proto.Metadata.ConsumerGroup = s.broker.GetConsumerGroup()
 
 	if s.store != nil {
 		if err := s.store.UpdateTask(ctx, proto); err != nil {

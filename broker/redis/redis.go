@@ -22,8 +22,8 @@ const (
 	// Key prefixes
 	streamPrefix    = "strego:stream:"
 	dlqPrefix       = "strego:dlq:"
-	scheduledKey    = "strego:scheduled"
-	retryKey        = "strego:retry"
+	scheduledPrefix = "strego:scheduled:"
+	retryPrefix     = "strego:retry:"
 	processedPrefix = "strego:processed:"
 	uniquePrefix    = "strego:unique:"
 	statsPrefix     = "strego:stats:"
@@ -101,6 +101,16 @@ func (b *Broker) streamKey(queue string) string {
 // dlqKey returns the DLQ stream key for a queue
 func (b *Broker) dlqKey(queue string) string {
 	return dlqPrefix + queue
+}
+
+// scheduledKey returns the scheduled sorted set key for a queue
+func (b *Broker) scheduledKey(queue string) string {
+	return scheduledPrefix + queue
+}
+
+// retryKey returns the retry sorted set key for a queue
+func (b *Broker) retryKey(queue string) string {
+	return retryPrefix + queue
 }
 
 // Publish adds a task to the specified queue
@@ -404,8 +414,8 @@ func (b *Broker) Schedule(ctx context.Context, task *types.TaskProto, processAt 
 
 	pipe := b.client.Pipeline()
 
-	// Add to scheduled sorted set
-	pipe.ZAdd(ctx, scheduledKey, redis.Z{
+	// Add to queue-specific scheduled sorted set
+	pipe.ZAdd(ctx, b.scheduledKey(queue), redis.Z{
 		Score:  float64(processAt.Unix()),
 		Member: string(data),
 	})
@@ -421,55 +431,59 @@ func (b *Broker) Schedule(ctx context.Context, task *types.TaskProto, processAt 
 }
 
 // Lua script for atomic scheduled task processing
-// Gets tasks with score <= now, removes them from sorted set, and adds to their target queues
+// Iterates over all queues, gets tasks with score <= now from each queue's scheduled set,
+// removes them and adds to their target queue streams
 var enqueueScheduledScript = redis.NewScript(`
-local scheduledKey = KEYS[1]
-local queuesKey = KEYS[2]
-local streamPrefix = ARGV[1]
-local statsPrefix = ARGV[2]
-local maxScore = ARGV[3]
-local limit = tonumber(ARGV[4])
+local queuesKey = KEYS[1]
+local scheduledPrefix = ARGV[1]
+local streamPrefix = ARGV[2]
+local statsPrefix = ARGV[3]
+local maxScore = ARGV[4]
+local limit = tonumber(ARGV[5])
 
--- Get ready tasks
-local tasks = redis.call('ZRANGEBYSCORE', scheduledKey, '-inf', maxScore, 'LIMIT', 0, limit)
-if #tasks == 0 then
+-- Get all known queues
+local queues = redis.call('SMEMBERS', queuesKey)
+if #queues == 0 then
     return 0
 end
 
-local count = 0
-for _, taskData in ipairs(tasks) do
-    -- Parse task to get queue
-    local task = cjson.decode(taskData)
-    local queue = 'default'
-    if task.options and task.options.queue and task.options.queue ~= '' then
-        queue = task.options.queue
+local totalCount = 0
+
+for _, queue in ipairs(queues) do
+    local scheduledKey = scheduledPrefix .. queue
+    
+    -- Get ready tasks for this queue
+    local tasks = redis.call('ZRANGEBYSCORE', scheduledKey, '-inf', maxScore, 'LIMIT', 0, limit)
+    
+    for _, taskData in ipairs(tasks) do
+        -- Parse task
+        local task = cjson.decode(taskData)
+        
+        -- Update state to pending
+        if task.metadata then
+            task.metadata.state = 'pending'
+        else
+            task.metadata = {state = 'pending'}
+        end
+        local updatedData = cjson.encode(task)
+        
+        -- Atomically: remove from scheduled set and add to stream
+        redis.call('ZREM', scheduledKey, taskData)
+        redis.call('XADD', streamPrefix .. queue, '*', 'data', updatedData)
+        redis.call('HINCRBY', statsPrefix .. queue, 'enqueued', 1)
+        
+        totalCount = totalCount + 1
     end
-    
-    -- Update state to pending
-    if task.metadata then
-        task.metadata.state = 'pending'
-    else
-        task.metadata = {state = 'pending'}
-    end
-    local updatedData = cjson.encode(task)
-    
-    -- Atomically: remove from sorted set and add to stream
-    redis.call('ZREM', scheduledKey, taskData)
-    redis.call('XADD', streamPrefix .. queue, '*', 'data', updatedData)
-    redis.call('SADD', queuesKey, queue)
-    redis.call('HINCRBY', statsPrefix .. queue, 'enqueued', 1)
-    
-    count = count + 1
 end
 
-return count
+return totalCount
 `)
 
 // EnqueueScheduled atomically moves ready scheduled tasks to their queues.
 func (b *Broker) EnqueueScheduled(ctx context.Context, until time.Time, limit int64) (int64, error) {
 	result, err := enqueueScheduledScript.Run(ctx, b.client,
-		[]string{scheduledKey, queuesKey},
-		streamPrefix, statsPrefix, until.Unix(), limit,
+		[]string{queuesKey},
+		scheduledPrefix, streamPrefix, statsPrefix, until.Unix(), limit,
 	).Int64()
 
 	if err != nil {
@@ -480,54 +494,59 @@ func (b *Broker) EnqueueScheduled(ctx context.Context, until time.Time, limit in
 }
 
 // Lua script for atomic retry task processing
+// Iterates over all queues, gets tasks with score <= now from each queue's retry set,
+// removes them and adds to their target queue streams
 var enqueueRetryScript = redis.NewScript(`
-local retryKey = KEYS[1]
-local queuesKey = KEYS[2]
-local streamPrefix = ARGV[1]
-local statsPrefix = ARGV[2]
-local maxScore = ARGV[3]
-local limit = tonumber(ARGV[4])
+local queuesKey = KEYS[1]
+local retryPrefix = ARGV[1]
+local streamPrefix = ARGV[2]
+local statsPrefix = ARGV[3]
+local maxScore = ARGV[4]
+local limit = tonumber(ARGV[5])
 
--- Get ready retry tasks
-local tasks = redis.call('ZRANGEBYSCORE', retryKey, '-inf', maxScore, 'LIMIT', 0, limit)
-if #tasks == 0 then
+-- Get all known queues
+local queues = redis.call('SMEMBERS', queuesKey)
+if #queues == 0 then
     return 0
 end
 
-local count = 0
-for _, taskData in ipairs(tasks) do
-    -- Parse task to get queue
-    local task = cjson.decode(taskData)
-    local queue = 'default'
-    if task.options and task.options.queue and task.options.queue ~= '' then
-        queue = task.options.queue
+local totalCount = 0
+
+for _, queue in ipairs(queues) do
+    local retryKey = retryPrefix .. queue
+    
+    -- Get ready retry tasks for this queue
+    local tasks = redis.call('ZRANGEBYSCORE', retryKey, '-inf', maxScore, 'LIMIT', 0, limit)
+    
+    for _, taskData in ipairs(tasks) do
+        -- Parse task
+        local task = cjson.decode(taskData)
+        
+        -- Update state to pending (from retry)
+        if task.metadata then
+            task.metadata.state = 'pending'
+        else
+            task.metadata = {state = 'pending'}
+        end
+        local updatedData = cjson.encode(task)
+        
+        -- Atomically: remove from retry set and add to stream
+        redis.call('ZREM', retryKey, taskData)
+        redis.call('XADD', streamPrefix .. queue, '*', 'data', updatedData)
+        redis.call('HINCRBY', statsPrefix .. queue, 'enqueued', 1)
+        
+        totalCount = totalCount + 1
     end
-    
-    -- Update state to pending (from retry)
-    if task.metadata then
-        task.metadata.state = 'pending'
-    else
-        task.metadata = {state = 'pending'}
-    end
-    local updatedData = cjson.encode(task)
-    
-    -- Atomically: remove from retry set and add to stream
-    redis.call('ZREM', retryKey, taskData)
-    redis.call('XADD', streamPrefix .. queue, '*', 'data', updatedData)
-    redis.call('SADD', queuesKey, queue)
-    redis.call('HINCRBY', statsPrefix .. queue, 'enqueued', 1)
-    
-    count = count + 1
 end
 
-return count
+return totalCount
 `)
 
 // EnqueueRetry atomically moves ready retry tasks to their queues.
 func (b *Broker) EnqueueRetry(ctx context.Context, until time.Time, limit int64) (int64, error) {
 	result, err := enqueueRetryScript.Run(ctx, b.client,
-		[]string{retryKey, queuesKey},
-		streamPrefix, statsPrefix, until.Unix(), limit,
+		[]string{queuesKey},
+		retryPrefix, streamPrefix, statsPrefix, until.Unix(), limit,
 	).Int64()
 
 	if err != nil {
@@ -559,8 +578,8 @@ func (b *Broker) Retry(ctx context.Context, queue string, task *types.TaskProto,
 		pipe.XDel(ctx, b.streamKey(queue), task.Metadata.StreamMsgID)
 	}
 
-	// Add to retry sorted set
-	pipe.ZAdd(ctx, retryKey, redis.Z{
+	// Add to queue-specific retry sorted set
+	pipe.ZAdd(ctx, b.retryKey(queue), redis.Z{
 		Score:  float64(processAt.Unix()),
 		Member: string(data),
 	})
@@ -734,12 +753,47 @@ func (b *Broker) GetQueueInfo(ctx context.Context, queue string) (*types.QueueIn
 	// For backwards compatibility
 	info.Processed = info.Completed
 
+	// Get scheduled count
+	scheduledCount, err := b.client.ZCard(ctx, b.scheduledKey(queue)).Result()
+	if err == nil {
+		info.Scheduled = scheduledCount
+	}
+
+	// Get retry count
+	retryCount, err := b.client.ZCard(ctx, b.retryKey(queue)).Result()
+	if err == nil {
+		info.Retry = retryCount
+	}
+
 	return info, nil
 }
 
 // GetQueues returns all known queue names
 func (b *Broker) GetQueues(ctx context.Context) ([]string, error) {
 	return b.client.SMembers(ctx, queuesKey).Result()
+}
+
+// GetConsumerGroup returns the consumer group name this broker uses
+func (b *Broker) GetConsumerGroup() string {
+	return b.config.Group
+}
+
+// GetScheduledCount returns the number of scheduled tasks for a queue
+func (b *Broker) GetScheduledCount(ctx context.Context, queue string) (int64, error) {
+	count, err := b.client.ZCard(ctx, b.scheduledKey(queue)).Result()
+	if err != nil && err != redis.Nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// GetRetryCount returns the number of retry tasks for a queue
+func (b *Broker) GetRetryCount(ctx context.Context, queue string) (int64, error) {
+	count, err := b.client.ZCard(ctx, b.retryKey(queue)).Result()
+	if err != nil && err != redis.Nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // GetConsumerGroups returns all consumer groups for a queue

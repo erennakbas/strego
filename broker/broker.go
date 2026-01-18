@@ -56,6 +56,15 @@ type Broker interface {
 	// GetQueues returns all known queue names
 	GetQueues(ctx context.Context) ([]string, error)
 
+	// GetConsumerGroup returns the consumer group name this broker uses
+	GetConsumerGroup() string
+
+	// GetScheduledCount returns the number of scheduled tasks for a queue
+	GetScheduledCount(ctx context.Context, queue string) (int64, error)
+
+	// GetRetryCount returns the number of retry tasks for a queue
+	GetRetryCount(ctx context.Context, queue string) (int64, error)
+
 	// GetConsumerGroups returns all consumer groups for a queue
 	GetConsumerGroups(ctx context.Context, queue string) ([]*types.ConsumerGroupInfo, error)
 

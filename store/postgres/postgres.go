@@ -89,6 +89,9 @@ func (s *Store) CreateTask(ctx context.Context, task *types.TaskProto) error {
 		}
 		if task.Options.ProcessAt != nil {
 			scheduledAt = task.Options.ProcessAt
+		} else {
+			now := time.Now()
+			scheduledAt = &now
 		}
 		if task.Options.Labels != nil {
 			labelsJSON, _ := json.Marshal(task.Options.Labels)
@@ -107,12 +110,17 @@ func (s *Store) CreateTask(ctx context.Context, task *types.TaskProto) error {
 		createdAt = time.Now()
 	}
 
+	var consumerGroup *string
+	if task.Metadata != nil && task.Metadata.ConsumerGroup != "" {
+		consumerGroup = &task.Metadata.ConsumerGroup
+	}
+
 	query := `
 		INSERT INTO strego_tasks (
 			id, type, queue, state, payload, 
 			max_retry, priority, created_at, scheduled_at, 
-			unique_key, labels
-		) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11::jsonb)
+			unique_key, labels, consumer_group
+		) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11::jsonb, $12)
 		ON CONFLICT (id) DO NOTHING
 	`
 
@@ -128,6 +136,7 @@ func (s *Store) CreateTask(ctx context.Context, task *types.TaskProto) error {
 		scheduledAt,
 		uniqueKey,
 		labels,
+		consumerGroup,
 	)
 
 	if err != nil {
@@ -144,6 +153,7 @@ func (s *Store) UpdateTask(ctx context.Context, task *types.TaskProto) error {
 	var startedAt, completedAt *time.Time
 	var lastError *string
 	var workerID *string
+	var consumerGroup *string
 
 	if task.Metadata != nil {
 		if task.Metadata.State != "" {
@@ -158,6 +168,9 @@ func (s *Store) UpdateTask(ctx context.Context, task *types.TaskProto) error {
 		if task.Metadata.WorkerID != "" {
 			workerID = &task.Metadata.WorkerID
 		}
+		if task.Metadata.ConsumerGroup != "" {
+			consumerGroup = &task.Metadata.ConsumerGroup
+		}
 	}
 
 	query := `
@@ -167,7 +180,8 @@ func (s *Store) UpdateTask(ctx context.Context, task *types.TaskProto) error {
 			started_at = $4,
 			completed_at = $5,
 			error = $6,
-			worker_id = $7
+			worker_id = $7,
+			consumer_group = COALESCE($8, consumer_group)
 		WHERE id = $1
 	`
 
@@ -179,6 +193,7 @@ func (s *Store) UpdateTask(ctx context.Context, task *types.TaskProto) error {
 		completedAt,
 		lastError,
 		workerID,
+		consumerGroup,
 	)
 
 	if err != nil {
@@ -223,7 +238,7 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*types.TaskProto, e
 	query := `
 		SELECT id, type, queue, state, payload, error, retry_count, max_retry,
 		       priority, created_at, scheduled_at, started_at, completed_at,
-		       worker_id, trace_id, unique_key, labels
+		       worker_id, consumer_group, trace_id, unique_key, labels
 		FROM strego_tasks WHERE id = $1
 	`
 
@@ -232,8 +247,8 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*types.TaskProto, e
 	var (
 		id, taskType, queue, state          string
 		payload                             string
-		errMsg, workerID, traceID           sql.NullString
-		uniqueKey                           sql.NullString
+		errMsg, workerID, consumerGroup     sql.NullString
+		traceID, uniqueKey                  sql.NullString
 		retryCount, maxRetry, priority      int
 		createdAt                           time.Time
 		scheduledAt, startedAt, completedAt sql.NullTime
@@ -244,7 +259,7 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*types.TaskProto, e
 		&id, &taskType, &queue, &state, &payload, &errMsg,
 		&retryCount, &maxRetry, &priority, &createdAt,
 		&scheduledAt, &startedAt, &completedAt,
-		&workerID, &traceID, &uniqueKey, &labelsJSON,
+		&workerID, &consumerGroup, &traceID, &uniqueKey, &labelsJSON,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -275,6 +290,9 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*types.TaskProto, e
 	}
 	if workerID.Valid {
 		task.Metadata.WorkerID = workerID.String
+	}
+	if consumerGroup.Valid {
+		task.Metadata.ConsumerGroup = consumerGroup.String
 	}
 	if traceID.Valid {
 		task.Metadata.TraceID = traceID.String
@@ -383,7 +401,7 @@ func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*type
 	query := fmt.Sprintf(`
 		SELECT id, type, queue, state, payload, error, retry_count, max_retry,
 		       priority, created_at, scheduled_at, started_at, completed_at,
-		       worker_id, trace_id, unique_key, labels
+		       worker_id, consumer_group, trace_id, unique_key, labels
 		FROM strego_tasks %s
 		ORDER BY %s %s
 		LIMIT %d OFFSET %d
@@ -400,8 +418,8 @@ func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*type
 		var (
 			id, taskType, queue, state          string
 			payload                             string
-			errMsg, workerID, traceID           sql.NullString
-			uniqueKey                           sql.NullString
+			errMsg, workerID, consumerGroup     sql.NullString
+			traceID, uniqueKey                  sql.NullString
 			retryCount, maxRetry, priority      int
 			createdAt                           time.Time
 			scheduledAt, startedAt, completedAt sql.NullTime
@@ -412,7 +430,7 @@ func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*type
 			&id, &taskType, &queue, &state, &payload, &errMsg,
 			&retryCount, &maxRetry, &priority, &createdAt,
 			&scheduledAt, &startedAt, &completedAt,
-			&workerID, &traceID, &uniqueKey, &labelsJSON,
+			&workerID, &consumerGroup, &traceID, &uniqueKey, &labelsJSON,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan task: %w", err)
@@ -439,6 +457,9 @@ func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*type
 		}
 		if workerID.Valid {
 			task.Metadata.WorkerID = workerID.String
+		}
+		if consumerGroup.Valid {
+			task.Metadata.ConsumerGroup = consumerGroup.String
 		}
 		if startedAt.Valid {
 			task.Metadata.StartedAt = &startedAt.Time

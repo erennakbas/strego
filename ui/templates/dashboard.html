@@ -513,14 +513,22 @@ document.body.addEventListener('htmx:afterSwap', function(event) {
 {{end}}
 
 {{define "partial_stats.html"}}
-<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
     <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
         <div class="text-sm text-gray-500 mb-1">Pending</div>
         <div class="text-2xl font-bold text-yellow-400">{{.PendingTasks}}</div>
     </div>
     <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+        <div class="text-sm text-gray-500 mb-1">Scheduled</div>
+        <div class="text-2xl font-bold text-purple-400">{{.ScheduledTasks}}</div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
         <div class="text-sm text-gray-500 mb-1">Active</div>
         <div class="text-2xl font-bold text-cyan-400">{{.ActiveTasks}}</div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+        <div class="text-sm text-gray-500 mb-1">Retry</div>
+        <div class="text-2xl font-bold text-orange-400">{{.RetryTasks}}</div>
     </div>
     <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
         <div class="text-sm text-gray-500 mb-1">Completed</div>
@@ -543,22 +551,30 @@ document.body.addEventListener('htmx:afterSwap', function(event) {
                 <a href="/queues/{{.Name}}" class="font-medium hover:text-red-400 transition-colors">{{.Name}}</a>
             </div>
         </div>
-        <div class="flex items-center gap-6 text-sm">
-            <div class="flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-yellow-500"></span>
-                <span class="text-gray-400">{{.Pending}} pending</span>
+        <div class="flex items-center gap-5 text-sm flex-wrap">
+            <div class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></span>
+                <span class="text-gray-400"><span class="tabular-nums min-w-[3ch] inline-block text-right">{{.Pending}}</span> pending</span>
             </div>
-            <div class="flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-cyan-500"></span>
-                <span class="text-gray-400">{{.Active}} active</span>
+            <div class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-purple-500 flex-shrink-0"></span>
+                <span class="text-gray-400"><span class="tabular-nums min-w-[3ch] inline-block text-right">{{.Scheduled}}</span> scheduled</span>
             </div>
-            <div class="flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                <span class="text-gray-400">{{.Processed}} completed</span>
+            <div class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-cyan-500 flex-shrink-0"></span>
+                <span class="text-gray-400"><span class="tabular-nums min-w-[3ch] inline-block text-right">{{.Active}}</span> active</span>
             </div>
-            <div class="flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-red-500"></span>
-                <span class="text-gray-400">{{.Dead}} dead</span>
+            <div class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0"></span>
+                <span class="text-gray-400"><span class="tabular-nums min-w-[3ch] inline-block text-right">{{.Retry}}</span> retry</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></span>
+                <span class="text-gray-400"><span class="tabular-nums min-w-[3ch] inline-block text-right">{{.Processed}}</span> completed</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"></span>
+                <span class="text-gray-400"><span class="tabular-nums min-w-[3ch] inline-block text-right">{{.Dead}}</span> dead</span>
             </div>
         </div>
     </div>
