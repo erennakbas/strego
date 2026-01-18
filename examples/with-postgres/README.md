@@ -34,11 +34,26 @@ CREATE DATABASE strego;
 
 ### 3. Run Migrations
 
+You have several options to run the required migrations:
+
 ```bash
-# From project root
-PGPASSWORD=admin123 psql -U erenakbas -h localhost -d strego -f migrations/001_create_strego_tasks.sql
-PGPASSWORD=admin123 psql -U erenakbas -h localhost -d strego -f migrations/002_create_strego_stats.sql
+# Option 1: Using psql directly
+psql -h localhost -U postgres -d strego -f migrations/001_create_strego_tasks.sql
+psql -h localhost -U postgres -d strego -f migrations/002_create_strego_stats.sql
+
+# Option 2: Using the migration example
+cd examples/migration
+go run main.go -dsn 'postgres://user:pass@localhost:5432/strego?sslmode=disable'
+
+# Option 3: Print SQL and pipe to psql
+cd examples/migration
+go run main.go -print | psql -h localhost -U postgres -d strego
+
+# Option 4: Programmatically in your code
+# See examples/migration/README.md for details
 ```
+
+For more migration options (golang-migrate, goose, etc.), see [examples/migration/README.md](../migration/README.md).
 
 ### 4. Run the Example
 

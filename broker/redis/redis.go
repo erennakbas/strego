@@ -312,7 +312,7 @@ func (b *Broker) claimStale(ctx context.Context, queue string, handler broker.Ta
 		}).Result()
 
 		if err != nil {
-			if err == redis.Nil {
+			if errors.Is(err, redis.Nil) {
 				break
 			}
 			return err
@@ -748,7 +748,7 @@ func (b *Broker) GetQueues(ctx context.Context) ([]string, error) {
 func (b *Broker) GetConsumerGroups(ctx context.Context, queue string) ([]*types.ConsumerGroupInfo, error) {
 	groups, err := b.client.XInfoGroups(ctx, b.streamKey(queue)).Result()
 	if err != nil {
-		if err == redis.Nil {
+		if errors.Is(err, redis.Nil) {
 			return []*types.ConsumerGroupInfo{}, nil
 		}
 		return nil, fmt.Errorf("failed to get consumer groups: %w", err)
@@ -771,7 +771,7 @@ func (b *Broker) GetConsumerGroups(ctx context.Context, queue string) ([]*types.
 func (b *Broker) GetGroupConsumers(ctx context.Context, queue, group string) ([]*types.ConsumerInfo, error) {
 	consumers, err := b.client.XInfoConsumers(ctx, b.streamKey(queue), group).Result()
 	if err != nil {
-		if err == redis.Nil {
+		if errors.Is(err, redis.Nil) {
 			return []*types.ConsumerInfo{}, nil
 		}
 		return nil, fmt.Errorf("failed to get group consumers: %w", err)

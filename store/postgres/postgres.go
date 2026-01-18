@@ -53,65 +53,12 @@ func New(cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	s := &Store{db: db}
-
-	if err := s.migrate(); err != nil {
-		return nil, fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	return s, nil
+	return &Store{db: db}, nil
 }
 
 // NewWithDB creates a new PostgreSQL store with an existing database connection.
-func NewWithDB(db *sql.DB) (*Store, error) {
-	s := &Store{db: db}
-
-	if err := s.migrate(); err != nil {
-		return nil, fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	return s, nil
-}
-
-// migrate creates the necessary tables if they don't exist.
-func (s *Store) migrate() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS strego_tasks (
-		id UUID PRIMARY KEY,
-		type VARCHAR(255) NOT NULL,
-		queue VARCHAR(255) NOT NULL DEFAULT 'default',
-		state VARCHAR(50) NOT NULL DEFAULT 'pending',
-		payload JSONB NOT NULL DEFAULT '{}',
-		error TEXT,
-		retry_count INT DEFAULT 0,
-		max_retry INT DEFAULT 3,
-		priority INT DEFAULT 0,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		scheduled_at TIMESTAMPTZ,
-		started_at TIMESTAMPTZ,
-		completed_at TIMESTAMPTZ,
-		worker_id VARCHAR(255),
-		trace_id VARCHAR(64),
-		unique_key VARCHAR(255),
-		labels JSONB DEFAULT '{}',
-		
-		CONSTRAINT valid_state CHECK (state IN (
-			'pending', 'scheduled', 'active', 
-			'completed', 'failed', 'retry', 'dead', 'cancelled'
-		))
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_strego_tasks_queue_state ON strego_tasks(queue, state);
-	CREATE INDEX IF NOT EXISTS idx_strego_tasks_state ON strego_tasks(state) WHERE state IN ('pending', 'active', 'retry');
-	CREATE INDEX IF NOT EXISTS idx_strego_tasks_type ON strego_tasks(type);
-	CREATE INDEX IF NOT EXISTS idx_strego_tasks_created ON strego_tasks(created_at DESC);
-	CREATE INDEX IF NOT EXISTS idx_strego_tasks_scheduled ON strego_tasks(scheduled_at) WHERE state = 'scheduled';
-	CREATE UNIQUE INDEX IF NOT EXISTS idx_strego_tasks_unique ON strego_tasks(unique_key) WHERE unique_key IS NOT NULL;
-	CREATE INDEX IF NOT EXISTS idx_strego_tasks_completed ON strego_tasks(completed_at) WHERE state IN ('completed', 'dead');
-	`
-
-	_, err := s.db.Exec(schema)
-	return err
+func NewWithDB(db *sql.DB) *Store {
+	return &Store{db: db}
 }
 
 // CreateTask saves a new task to the store.
@@ -300,7 +247,7 @@ func (s *Store) GetTask(ctx context.Context, taskID string) (*types.TaskProto, e
 		&workerID, &traceID, &uniqueKey, &labelsJSON,
 	)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrTaskNotFound
 	}
 	if err != nil {

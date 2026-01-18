@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS strego_tasks (
     -- Task state
     state VARCHAR(50) NOT NULL DEFAULT 'pending',
     
-    -- Payload (protobuf encoded)
-    payload BYTEA NOT NULL,
+    -- Payload (JSON encoded)
+    payload JSONB NOT NULL DEFAULT '{}',
     
     -- Error handling
     error TEXT,
@@ -97,7 +97,7 @@ COMMENT ON COLUMN strego_tasks.id IS 'Unique task identifier (UUID)';
 COMMENT ON COLUMN strego_tasks.type IS 'Task type/name used for handler routing';
 COMMENT ON COLUMN strego_tasks.queue IS 'Queue name (default, critical, low, etc.)';
 COMMENT ON COLUMN strego_tasks.state IS 'Current task state';
-COMMENT ON COLUMN strego_tasks.payload IS 'Protobuf-encoded task payload';
+COMMENT ON COLUMN strego_tasks.payload IS 'JSON-encoded task payload';
 COMMENT ON COLUMN strego_tasks.error IS 'Last error message if task failed';
 COMMENT ON COLUMN strego_tasks.retry_count IS 'Number of retry attempts';
 COMMENT ON COLUMN strego_tasks.max_retry IS 'Maximum retry attempts allowed';
