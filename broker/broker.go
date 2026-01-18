@@ -24,17 +24,16 @@ type Broker interface {
 	// Schedule adds a task to be processed at a specific time
 	Schedule(ctx context.Context, task *types.TaskProto, processAt time.Time) error
 
-	// GetScheduled retrieves tasks that are ready to be processed
-	GetScheduled(ctx context.Context, until time.Time, limit int64) ([]*types.TaskProto, error)
-
-	// MoveToQueue moves a scheduled task to its target queue
-	MoveToQueue(ctx context.Context, task *types.TaskProto) error
+	// EnqueueScheduled atomically moves ready scheduled tasks to their queues.
+	// Returns the number of tasks moved. Uses Lua script for atomicity.
+	EnqueueScheduled(ctx context.Context, until time.Time, limit int64) (int64, error)
 
 	// Retry schedules a task for retry with backoff
 	Retry(ctx context.Context, queue string, task *types.TaskProto, delay time.Duration) error
 
-	// GetRetry retrieves tasks that are ready to be retried
-	GetRetry(ctx context.Context, until time.Time, limit int64) ([]*types.TaskProto, error)
+	// EnqueueRetry atomically moves ready retry tasks to their queues.
+	// Returns the number of tasks moved. Uses Lua script for atomicity.
+	EnqueueRetry(ctx context.Context, until time.Time, limit int64) (int64, error)
 
 	// MoveToDLQ moves a failed task to the dead letter queue
 	MoveToDLQ(ctx context.Context, queue string, task *types.TaskProto, err error) error

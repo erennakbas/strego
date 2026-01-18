@@ -75,6 +75,21 @@ func NewBroker(client *redis.Client, opts ...Option) *Broker {
 		b.config.Consumer = fmt.Sprintf("worker-%s-%d", hostname, os.Getpid())
 	}
 
+	// Ensure non-zero values for required config fields
+	defaults := broker.DefaultConsumerConfig()
+	if b.config.BatchSize <= 0 {
+		b.config.BatchSize = defaults.BatchSize
+	}
+	if b.config.BlockDuration <= 0 {
+		b.config.BlockDuration = defaults.BlockDuration
+	}
+	if b.config.ClaimStaleAfter <= 0 {
+		b.config.ClaimStaleAfter = defaults.ClaimStaleAfter
+	}
+	if b.config.ClaimCheckInterval <= 0 {
+		b.config.ClaimCheckInterval = defaults.ClaimCheckInterval
+	}
+
 	return b
 }
 
@@ -405,88 +420,121 @@ func (b *Broker) Schedule(ctx context.Context, task *types.TaskProto, processAt 
 	return err
 }
 
-// GetScheduled retrieves and REMOVES tasks that are ready to be processed
-// Uses ZPOPMIN for atomic get-and-delete
-func (b *Broker) GetScheduled(ctx context.Context, until time.Time, limit int64) ([]*types.TaskProto, error) {
-	// First, get the count of ready tasks
-	members, err := b.client.ZRangeByScore(ctx, scheduledKey, &redis.ZRangeBy{
-		Min:   "-inf",
-		Max:   fmt.Sprintf("%d", until.Unix()),
-		Count: limit,
-	}).Result()
+// Lua script for atomic scheduled task processing
+// Gets tasks with score <= now, removes them from sorted set, and adds to their target queues
+var enqueueScheduledScript = redis.NewScript(`
+local scheduledKey = KEYS[1]
+local queuesKey = KEYS[2]
+local streamPrefix = ARGV[1]
+local statsPrefix = ARGV[2]
+local maxScore = ARGV[3]
+local limit = tonumber(ARGV[4])
 
-	if err != nil || len(members) == 0 {
-		return nil, err
-	}
+-- Get ready tasks
+local tasks = redis.call('ZRANGEBYSCORE', scheduledKey, '-inf', maxScore, 'LIMIT', 0, limit)
+if #tasks == 0 then
+    return 0
+end
 
-	// Pop them atomically
-	results, err := b.client.ZPopMin(ctx, scheduledKey, int64(len(members))).Result()
+local count = 0
+for _, taskData in ipairs(tasks) do
+    -- Parse task to get queue
+    local task = cjson.decode(taskData)
+    local queue = 'default'
+    if task.options and task.options.queue and task.options.queue ~= '' then
+        queue = task.options.queue
+    end
+    
+    -- Update state to pending
+    if task.metadata then
+        task.metadata.state = 'pending'
+    else
+        task.metadata = {state = 'pending'}
+    end
+    local updatedData = cjson.encode(task)
+    
+    -- Atomically: remove from sorted set and add to stream
+    redis.call('ZREM', scheduledKey, taskData)
+    redis.call('XADD', streamPrefix .. queue, '*', 'data', updatedData)
+    redis.call('SADD', queuesKey, queue)
+    redis.call('HINCRBY', statsPrefix .. queue, 'enqueued', 1)
+    
+    count = count + 1
+end
+
+return count
+`)
+
+// EnqueueScheduled atomically moves ready scheduled tasks to their queues.
+func (b *Broker) EnqueueScheduled(ctx context.Context, until time.Time, limit int64) (int64, error) {
+	result, err := enqueueScheduledScript.Run(ctx, b.client,
+		[]string{scheduledKey, queuesKey},
+		streamPrefix, statsPrefix, until.Unix(), limit,
+	).Int64()
+
 	if err != nil {
-		return nil, err
+		return 0, fmt.Errorf("failed to enqueue scheduled tasks: %w", err)
 	}
 
-	tasks := make([]*types.TaskProto, 0, len(results))
-	now := float64(until.Unix())
-
-	for _, z := range results {
-		// Only process if score <= until (in case new items were added)
-		if z.Score > now {
-			// Put it back - it's not ready yet
-			b.client.ZAdd(ctx, scheduledKey, z)
-			continue
-		}
-
-		// Handle both string and []byte member types
-		var data string
-		switch v := z.Member.(type) {
-		case string:
-			data = v
-		default:
-			continue
-		}
-
-		task := &types.TaskProto{}
-		if err := json.Unmarshal([]byte(data), task); err != nil {
-			continue
-		}
-		tasks = append(tasks, task)
-	}
-
-	return tasks, nil
+	return result, nil
 }
 
-// MoveToQueue moves a task directly to its target queue (task already removed from sorted set)
-func (b *Broker) MoveToQueue(ctx context.Context, task *types.TaskProto) error {
-	queue := task.Options.Queue
-	if queue == "" {
-		queue = "default"
-	}
+// Lua script for atomic retry task processing
+var enqueueRetryScript = redis.NewScript(`
+local retryKey = KEYS[1]
+local queuesKey = KEYS[2]
+local streamPrefix = ARGV[1]
+local statsPrefix = ARGV[2]
+local maxScore = ARGV[3]
+local limit = tonumber(ARGV[4])
 
-	// Update state
-	task.Metadata.State = types.TaskStatePending
-	data, err := json.Marshal(task)
+-- Get ready retry tasks
+local tasks = redis.call('ZRANGEBYSCORE', retryKey, '-inf', maxScore, 'LIMIT', 0, limit)
+if #tasks == 0 then
+    return 0
+end
+
+local count = 0
+for _, taskData in ipairs(tasks) do
+    -- Parse task to get queue
+    local task = cjson.decode(taskData)
+    local queue = 'default'
+    if task.options and task.options.queue and task.options.queue ~= '' then
+        queue = task.options.queue
+    end
+    
+    -- Update state to pending (from retry)
+    if task.metadata then
+        task.metadata.state = 'pending'
+    else
+        task.metadata = {state = 'pending'}
+    end
+    local updatedData = cjson.encode(task)
+    
+    -- Atomically: remove from retry set and add to stream
+    redis.call('ZREM', retryKey, taskData)
+    redis.call('XADD', streamPrefix .. queue, '*', 'data', updatedData)
+    redis.call('SADD', queuesKey, queue)
+    redis.call('HINCRBY', statsPrefix .. queue, 'enqueued', 1)
+    
+    count = count + 1
+end
+
+return count
+`)
+
+// EnqueueRetry atomically moves ready retry tasks to their queues.
+func (b *Broker) EnqueueRetry(ctx context.Context, until time.Time, limit int64) (int64, error) {
+	result, err := enqueueRetryScript.Run(ctx, b.client,
+		[]string{retryKey, queuesKey},
+		streamPrefix, statsPrefix, until.Unix(), limit,
+	).Int64()
+
 	if err != nil {
-		return err
+		return 0, fmt.Errorf("failed to enqueue retry tasks: %w", err)
 	}
 
-	pipe := b.client.Pipeline()
-
-	// Add to stream
-	pipe.XAdd(ctx, &redis.XAddArgs{
-		Stream: b.streamKey(queue),
-		Values: map[string]interface{}{
-			"data": string(data),
-		},
-	})
-
-	// Track queue in set
-	pipe.SAdd(ctx, queuesKey, queue)
-
-	// Increment enqueued counter
-	pipe.HIncrBy(ctx, statsPrefix+queue, "enqueued", 1)
-
-	_, err = pipe.Exec(ctx)
-	return err
+	return result, nil
 }
 
 // Retry schedules a task for retry with backoff
@@ -519,56 +567,6 @@ func (b *Broker) Retry(ctx context.Context, queue string, task *types.TaskProto,
 
 	_, err = pipe.Exec(ctx)
 	return err
-}
-
-// GetRetry retrieves and REMOVES tasks that are ready to be retried
-// Uses ZPOPMIN for atomic get-and-delete
-func (b *Broker) GetRetry(ctx context.Context, until time.Time, limit int64) ([]*types.TaskProto, error) {
-	// First, get the count of ready tasks
-	members, err := b.client.ZRangeByScore(ctx, retryKey, &redis.ZRangeBy{
-		Min:   "-inf",
-		Max:   fmt.Sprintf("%d", until.Unix()),
-		Count: limit,
-	}).Result()
-
-	if err != nil || len(members) == 0 {
-		return nil, err
-	}
-
-	// Pop them atomically
-	results, err := b.client.ZPopMin(ctx, retryKey, int64(len(members))).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	tasks := make([]*types.TaskProto, 0, len(results))
-	now := float64(until.Unix())
-
-	for _, z := range results {
-		// Only process if score <= until (in case new items were added)
-		if z.Score > now {
-			// Put it back - it's not ready yet
-			b.client.ZAdd(ctx, retryKey, z)
-			continue
-		}
-
-		// Handle both string and []byte member types
-		var data string
-		switch v := z.Member.(type) {
-		case string:
-			data = v
-		default:
-			continue
-		}
-
-		task := &types.TaskProto{}
-		if err := json.Unmarshal([]byte(data), task); err != nil {
-			continue
-		}
-		tasks = append(tasks, task)
-	}
-
-	return tasks, nil
 }
 
 // MoveToDLQ moves a failed task to the dead letter queue

@@ -19,12 +19,13 @@ import (
 
 // Default configuration values
 const (
-	DefaultConcurrency       = 10
-	DefaultShutdownTimeout   = 10 * time.Second
-	DefaultProcessedTTL      = 24 * time.Hour
-	DefaultSchedulerTick     = 1 * time.Second
-	DefaultRetryBaseDuration = 1 * time.Second
-	DefaultRetryMaxDuration  = 10 * time.Minute
+	DefaultConcurrency        = 10
+	DefaultShutdownTimeout    = 10 * time.Second
+	DefaultProcessedTTL       = 24 * time.Hour
+	DefaultSchedulerInterval  = 5 * time.Second
+	DefaultSchedulerBatchSize = 100
+	DefaultRetryBaseDuration  = 1 * time.Second
+	DefaultRetryMaxDuration   = 10 * time.Minute
 )
 
 // ErrTaskRetried is returned when a task has been scheduled for retry.
@@ -44,13 +45,14 @@ type Server struct {
 	workerID string
 
 	// Configuration
-	concurrency       int
-	queues            []string
-	shutdownTimeout   time.Duration
-	processedTTL      time.Duration
-	schedulerTick     time.Duration
-	retryBaseDuration time.Duration
-	retryMaxDuration  time.Duration
+	concurrency        int
+	queues             []string
+	shutdownTimeout    time.Duration
+	processedTTL       time.Duration
+	schedulerInterval  time.Duration
+	schedulerBatchSize int
+	retryBaseDuration  time.Duration
+	retryMaxDuration   time.Duration
 
 	// Consumer cleanup (optional)
 	enableConsumerCleanup bool
@@ -132,24 +134,45 @@ func WithRetryConfig(base, max time.Duration) ServerOption {
 	}
 }
 
+// WithSchedulerInterval sets how often the scheduler checks for scheduled/retry tasks.
+// Default is 1 second. Lower values provide better precision but increase Redis load.
+func WithSchedulerInterval(d time.Duration) ServerOption {
+	return func(s *Server) {
+		if d > 0 {
+			s.schedulerInterval = d
+		}
+	}
+}
+
+// WithSchedulerBatchSize sets how many scheduled/retry tasks to process per tick.
+// Default is 100. Increase if you have many scheduled tasks becoming ready at once.
+func WithSchedulerBatchSize(n int) ServerOption {
+	return func(s *Server) {
+		if n > 0 {
+			s.schedulerBatchSize = n
+		}
+	}
+}
+
 // NewServer creates a new task processing server.
 func NewServer(b broker.Broker, opts ...ServerOption) *Server {
 	hostname, _ := os.Hostname()
 	workerID := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 
 	s := &Server{
-		broker:            b,
-		mux:               NewServeMux(),
-		logger:            defaultLogger(),
-		workerID:          workerID,
-		concurrency:       DefaultConcurrency,
-		queues:            []string{"default"},
-		shutdownTimeout:   DefaultShutdownTimeout,
-		processedTTL:      DefaultProcessedTTL,
-		schedulerTick:     DefaultSchedulerTick,
-		retryBaseDuration: DefaultRetryBaseDuration,
-		retryMaxDuration:  DefaultRetryMaxDuration,
-		shutdown:          make(chan struct{}),
+		broker:             b,
+		mux:                NewServeMux(),
+		logger:             defaultLogger(),
+		workerID:           workerID,
+		concurrency:        DefaultConcurrency,
+		queues:             []string{"default"},
+		shutdownTimeout:    DefaultShutdownTimeout,
+		processedTTL:       DefaultProcessedTTL,
+		schedulerInterval:  DefaultSchedulerInterval,
+		schedulerBatchSize: DefaultSchedulerBatchSize,
+		retryBaseDuration:  DefaultRetryBaseDuration,
+		retryMaxDuration:   DefaultRetryMaxDuration,
+		shutdown:           make(chan struct{}),
 	}
 
 	for _, opt := range opts {
@@ -446,7 +469,7 @@ func (s *Server) calculateBackoff(attempt int) time.Duration {
 func (s *Server) runScheduler(ctx context.Context) {
 	defer s.wg.Done()
 
-	ticker := time.NewTicker(s.schedulerTick)
+	ticker := time.NewTicker(s.schedulerInterval)
 	defer ticker.Stop()
 
 	for {
@@ -552,62 +575,26 @@ func (s *Server) cleanupDeadConsumers(ctx context.Context, idleThreshold time.Du
 
 // processScheduled moves scheduled tasks that are ready to their queues.
 func (s *Server) processScheduled(ctx context.Context) {
-	tasks, err := s.broker.GetScheduled(ctx, time.Now(), 100)
+	count, err := s.broker.EnqueueScheduled(ctx, time.Now(), int64(s.schedulerBatchSize))
 	if err != nil {
-		s.logger.WithError(err).Error("failed to get scheduled tasks")
+		s.logger.WithError(err).Error("failed to enqueue scheduled tasks")
 		return
 	}
 
-	for _, task := range tasks {
-		if err := s.broker.MoveToQueue(ctx, task); err != nil {
-			s.logger.WithField("task_id", task.ID).WithError(err).Error("failed to move scheduled task to queue")
-			continue
-		}
-
-		queue := "default"
-		if task.Options != nil && task.Options.Queue != "" {
-			queue = task.Options.Queue
-		}
-
-		s.logger.WithFields(logrus.Fields{
-			"task_id": task.ID,
-			"queue":   queue,
-		}).Debug("moved scheduled task to queue")
+	if count > 0 {
+		s.logger.WithField("count", count).Debug("enqueued scheduled tasks")
 	}
 }
 
 // processRetries moves retry tasks that are ready back to their queues.
 func (s *Server) processRetries(ctx context.Context) {
-	tasks, err := s.broker.GetRetry(ctx, time.Now(), 100)
+	count, err := s.broker.EnqueueRetry(ctx, time.Now(), int64(s.schedulerBatchSize))
 	if err != nil {
-		s.logger.WithError(err).Error("failed to get retry tasks")
+		s.logger.WithError(err).Error("failed to enqueue retry tasks")
 		return
 	}
 
-	if len(tasks) > 0 {
-		s.logger.WithField("count", len(tasks)).Info("processing retry tasks")
-	}
-
-	for _, task := range tasks {
-		if err := s.broker.MoveToQueue(ctx, task); err != nil {
-			s.logger.WithField("task_id", task.ID).WithError(err).Error("failed to move retry task to queue")
-			continue
-		}
-
-		queue := "default"
-		if task.Options != nil && task.Options.Queue != "" {
-			queue = task.Options.Queue
-		}
-
-		retryCount := int32(0)
-		if task.Metadata != nil {
-			retryCount = task.Metadata.RetryCount
-		}
-
-		s.logger.WithFields(logrus.Fields{
-			"task_id":     task.ID,
-			"queue":       queue,
-			"retry_count": retryCount,
-		}).Info("moved retry task to queue")
+	if count > 0 {
+		s.logger.WithField("count", count).Info("enqueued retry tasks")
 	}
 }
