@@ -60,7 +60,7 @@ type TaskFilter struct {
 	CreatedBefore time.Time
 	Limit         int
 	Offset        int
-	SortBy        string // "created_at", "started_at", "completed_at"
+	SortBy        string // "created_at", "started_at", "completed_at", "scheduled_at"
 	SortOrder     string // "asc" or "desc"
 }
 

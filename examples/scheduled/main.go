@@ -1,4 +1,5 @@
 // Package main demonstrates scheduled/delayed task processing with strego.
+// Includes PostgreSQL for task history and UI for monitoring.
 package main
 
 import (
@@ -14,6 +15,8 @@ import (
 	"github.com/erennakbas/strego"
 	"github.com/erennakbas/strego/broker"
 	brokerRedis "github.com/erennakbas/strego/broker/redis"
+	"github.com/erennakbas/strego/store/postgres"
+	"github.com/erennakbas/strego/ui"
 )
 
 func main() {
@@ -24,19 +27,38 @@ func main() {
 		FullTimestamp: true,
 	})
 
-	// Connect to Redis
+	ctx := context.Background()
+
+	// ============================================
+	// Connect to Redis (required - message broker)
+	// ============================================
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
 
-	ctx := context.Background()
-
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		logger.WithError(err).Fatal("failed to connect to redis")
 	}
-	logger.Info("connected to redis")
+	logger.WithField("addr", "localhost:6379").Info("connected to redis")
 
-	// Create broker with scheduler configuration
+	// ============================================
+	// Connect to PostgreSQL (optional - for UI/history)
+	// ============================================
+	pgStore, err := postgres.New(postgres.Config{
+		DSN:             "postgres://erenakbas:admin123@localhost:5432/picus_ng_test?sslmode=disable",
+		MaxOpenConns:    25,
+		MaxIdleConns:    5,
+		ConnMaxLifetime: 5 * time.Minute,
+	})
+	if err != nil {
+		logger.WithError(err).Fatal("failed to connect to postgresql")
+	}
+	defer pgStore.Close()
+	logger.WithField("addr", "localhost:5432").Info("connected to postgresql")
+
+	// ============================================
+	// Create Broker (Redis Streams)
+	// ============================================
 	b := brokerRedis.NewBroker(redisClient, brokerRedis.WithConsumerConfig(broker.ConsumerConfig{
 		Group:              "strego-scheduled-example",
 		BatchSize:          10,
@@ -45,17 +67,45 @@ func main() {
 		ClaimCheckInterval: 30 * time.Second,
 	}))
 
-	// Create client for enqueuing tasks
-	client := strego.NewClient(b, strego.WithClientLogger(logger))
+	// ============================================
+	// Create Client (Producer) with PostgreSQL
+	// ============================================
+	client := strego.NewClient(b,
+		strego.WithStore(pgStore),
+		strego.WithClientLogger(logger),
+	)
 
-	// Create server with custom scheduler interval
-	// Default is 5 seconds, you can make it faster for more precision
+	// ============================================
+	// Create Server (Consumer) with PostgreSQL
+	// ============================================
+	// Custom scheduler interval for more precision (default is 5 seconds)
 	server := strego.NewServer(b,
 		strego.WithConcurrency(5),
-		strego.WithQueues("default", "reports", "reminders"),
+		strego.WithQueues("emails", "reports", "reminders"),
+		strego.WithServerStore(pgStore),
 		strego.WithServerLogger(logger),
 		strego.WithSchedulerInterval(1*time.Second), // Check every 1 second for more precision
 	)
+
+	// ============================================
+	// Start UI Server with PostgreSQL
+	// ============================================
+	uiServer, err := ui.NewServer(ui.Config{
+		Addr:   ":8080",
+		Broker: b,
+		Store:  pgStore,
+		Logger: logger,
+	})
+	if err != nil {
+		logger.WithError(err).Fatal("failed to create UI server")
+	}
+
+	go func() {
+		logger.WithField("url", "http://localhost:8080").Info("starting UI server")
+		if err := uiServer.Start(); err != nil {
+			logger.WithError(err).Error("UI server error")
+		}
+	}()
 
 	// Register handlers
 	server.HandleFunc("reminder:send", handleSendReminder)
@@ -69,14 +119,17 @@ func main() {
 		enqueueScheduledTasks(ctx, client, logger)
 	}()
 
-	// Handle shutdown
+	// ============================================
+	// Handle Graceful Shutdown
+	// ============================================
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
 	go func() {
 		<-sigCh
-		logger.Info("shutting down...")
+		logger.Info("shutting down gracefully...")
 		server.Shutdown()
+		uiServer.Shutdown(context.Background())
 	}()
 
 	// Start processing
@@ -161,7 +214,7 @@ func enqueueScheduledTasks(ctx context.Context, client *strego.Client, logger *l
 	for i := 1; i <= 10; i++ {
 		task := strego.NewTaskFromBytes("email:welcome",
 			[]byte(`{"email": "user`+string(rune('0'+i))+`@example.com", "wave": 1}`),
-			strego.WithQueue("default"),
+			strego.WithQueue("emails"),
 			strego.WithProcessIn(10*time.Second),
 		)
 		client.Enqueue(ctx, task)
@@ -191,7 +244,7 @@ func enqueueScheduledTasks(ctx context.Context, client *strego.Client, logger *l
 	// WAVE 3: 30 seconds - Mixed batch
 	// ============================================
 	for i := 1; i <= 8; i++ {
-		queue := "default"
+		queue := "emails"
 		taskType := "cleanup:old-data"
 		if i%2 == 0 {
 			queue = "reminders"
@@ -215,7 +268,7 @@ func enqueueScheduledTasks(ctx context.Context, client *strego.Client, logger *l
 	for i := 1; i <= 3; i++ {
 		task := strego.NewTaskFromBytes("email:welcome",
 			[]byte(`{"email": "vip`+string(rune('0'+i))+`@example.com", "priority": "high"}`),
-			strego.WithQueue("default"),
+			strego.WithQueue("emails"),
 			strego.WithProcessIn(45*time.Second),
 			strego.WithMaxRetry(5),
 		)

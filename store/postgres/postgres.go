@@ -383,7 +383,7 @@ func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*type
 	orderBy := "created_at"
 	if filter.SortBy != "" {
 		switch filter.SortBy {
-		case "created_at", "started_at", "completed_at", "type", "queue", "state":
+		case "created_at", "started_at", "completed_at", "scheduled_at", "type", "queue", "state":
 			orderBy = filter.SortBy
 		}
 	}
@@ -460,6 +460,9 @@ func (s *Store) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*type
 		}
 		if consumerGroup.Valid {
 			task.Metadata.ConsumerGroup = consumerGroup.String
+		}
+		if scheduledAt.Valid {
+			task.Options.ProcessAt = &scheduledAt.Time
 		}
 		if startedAt.Valid {
 			task.Metadata.StartedAt = &startedAt.Time

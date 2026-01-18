@@ -235,6 +235,25 @@ uiServer, _ := ui.NewServer(ui.Config{
 | [production](examples/production) | Multi-phase retry scenarios |
 | [crash-recovery](examples/crash-recovery) | Worker crash and task claiming demo |
 
+## Redis Deployment
+
+| Mode | Supported | Notes |
+|------|-----------|-------|
+| Single Instance | ✅ | Default, works out of the box |
+| Sentinel (HA) | ✅ | Use `redis.NewFailoverClient` |
+| Cluster | ❌ | Not yet supported |
+
+**Sentinel Example:**
+
+```go
+redisClient := redis.NewFailoverClient(&redis.FailoverOptions{
+    MasterName:    "mymaster",
+    SentinelAddrs: []string{"sentinel1:26379", "sentinel2:26379"},
+})
+
+broker := brokerRedis.NewBroker(redisClient)
+```
+
 ## Redis Key Structure
 
 ```
@@ -268,6 +287,15 @@ strego:queues                 # Set - all queue names
 | Exactly-once | UniqueTask | ❌ | ✅ |
 | Panic Recovery | ✅ | ✅ | ✅ |
 | Logging | slog | - | **logrus** |
+
+## Roadmap
+
+- [ ] Redis Cluster support
+- [ ] Prometheus metrics
+- [ ] OpenTelemetry tracing
+- [ ] Workflow support (chains, groups)
+- [ ] Periodic/Cron tasks
+- [ ] Rate limiting
 
 ## License
 

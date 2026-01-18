@@ -50,15 +50,17 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Parse templates
 	funcMap := template.FuncMap{
-		"formatTime":     formatTime,
-		"formatDuration": formatDuration,
-		"stateClass":     stateClass,
-		"stateIcon":      stateIcon,
-		"truncate":       truncate,
-		"json":           toJSON,
-		"add":            func(a, b int) int { return a + b },
-		"sub":            func(a, b int) int { return a - b },
-		"mul":            func(a, b int) int { return a * b },
+		"formatTime":          formatTime,
+		"formatDuration":      formatDuration,
+		"formatScheduledTime": formatScheduledTime,
+		"isOverdue":           isOverdue,
+		"stateClass":          stateClass,
+		"stateIcon":           stateIcon,
+		"truncate":            truncate,
+		"json":                toJSON,
+		"add":                 func(a, b int) int { return a + b },
+		"sub":                 func(a, b int) int { return a - b },
+		"mul":                 func(a, b int) int { return a * b },
 		"div": func(a, b int) int {
 			if b == 0 {
 				return 0
@@ -228,6 +230,69 @@ func truncate(s string, length int) string {
 	return s[:length] + "..."
 }
 
+// formatScheduledTime formats a scheduled time as relative time (e.g., "in 5m", "overdue 2h")
+func formatScheduledTime(t interface{}) string {
+	var scheduledAt time.Time
+
+	switch v := t.(type) {
+	case time.Time:
+		if v.IsZero() {
+			return ""
+		}
+		scheduledAt = v
+	case *time.Time:
+		if v == nil || v.IsZero() {
+			return ""
+		}
+		scheduledAt = *v
+	default:
+		return ""
+	}
+
+	now := time.Now()
+	diff := scheduledAt.Sub(now)
+
+	if diff > 0 {
+		// Future - task is scheduled for later
+		return "in " + formatRelativeDuration(diff)
+	} else {
+		// Past - task is overdue (should have been processed)
+		return "overdue " + formatRelativeDuration(-diff)
+	}
+}
+
+// formatRelativeDuration formats a duration in a human-readable relative format
+func formatRelativeDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		hours := int(d.Hours())
+		mins := int(d.Minutes()) % 60
+		if mins > 0 {
+			return fmt.Sprintf("%dh %dm", hours, mins)
+		}
+		return fmt.Sprintf("%dh", hours)
+	}
+	days := int(d.Hours() / 24)
+	return fmt.Sprintf("%dd", days)
+}
+
+// isOverdue checks if a scheduled time is in the past
+func isOverdue(t interface{}) bool {
+	switch v := t.(type) {
+	case time.Time:
+		return !v.IsZero() && v.Before(time.Now())
+	case *time.Time:
+		return v != nil && !v.IsZero() && v.Before(time.Now())
+	default:
+		return false
+	}
+}
+
 func toJSON(v interface{}) string {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -259,6 +324,14 @@ type StateInfo struct {
 
 func stateList() []StateInfo {
 	return []StateInfo{
+		{
+			Value:          "scheduled",
+			Label:          "Scheduled",
+			Icon:           "◷",
+			IconClass:      "text-blue-400",
+			CheckedClass:   "bg-blue-500/20 text-blue-300",
+			UncheckedClass: "bg-gray-800/50 text-gray-400",
+		},
 		{
 			Value:          "pending",
 			Label:          "Pending",
@@ -564,10 +637,14 @@ func (s *Server) handleQueues(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		scheduledCount, _ := s.broker.GetScheduledCount(r.Context(), q)
+		retryCount, _ := s.broker.GetRetryCount(r.Context(), q)
 		queueInfos = append(queueInfos, map[string]interface{}{
 			"Name":      info.Name,
 			"Pending":   info.Pending,
+			"Scheduled": scheduledCount,
 			"Active":    info.Active,
+			"Retry":     retryCount,
 			"Dead":      info.Dead,
 			"Processed": info.Processed,
 			"Failed":    info.Failed,
@@ -984,55 +1061,15 @@ func (s *Server) handleCleanupConsumers(w http.ResponseWriter, r *http.Request) 
 // HTMX partial handlers
 
 func (s *Server) handlePartialStats(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Build stats from broker (Redis) if store is not available
-	var stats struct {
-		TotalTasks     int64
-		PendingTasks   int64
-		ActiveTasks    int64
-		CompletedTasks int64
-		FailedTasks    int64
-		DeadTasks      int64
-		RetryTasks     int64
-		ScheduledTasks int64
+	if s.store == nil {
+		_, _ = fmt.Fprint(w, `<div class="text-gray-500">Stats require PostgreSQL</div>`)
+		return
 	}
 
-	// Get stats from store (PostgreSQL) if available
-	if s.store != nil {
-		storeStats, err := s.store.GetStats(ctx)
-		if err == nil {
-			stats.TotalTasks = storeStats.TotalTasks
-			stats.PendingTasks = storeStats.PendingTasks
-			stats.ActiveTasks = storeStats.ActiveTasks
-			stats.CompletedTasks = storeStats.CompletedTasks
-			stats.FailedTasks = storeStats.FailedTasks
-			stats.DeadTasks = storeStats.DeadTasks
-			stats.RetryTasks = storeStats.RetryTasks
-			stats.ScheduledTasks = storeStats.ScheduledTasks
-		}
-	}
-
-	// Always get scheduled/retry counts from Redis (real-time)
-	queues, err := s.broker.GetQueues(ctx)
-	if err == nil {
-		for _, queue := range queues {
-			scheduledCount, _ := s.broker.GetScheduledCount(ctx, queue)
-			retryCount, _ := s.broker.GetRetryCount(ctx, queue)
-			stats.ScheduledTasks += scheduledCount
-			stats.RetryTasks += retryCount
-
-			// If no store, also get pending/active/dead from broker
-			if s.store == nil {
-				queueInfo, err := s.broker.GetQueueInfo(ctx, queue)
-				if err == nil {
-					stats.PendingTasks += queueInfo.Pending
-					stats.ActiveTasks += queueInfo.Active
-					stats.DeadTasks += queueInfo.Dead
-					stats.CompletedTasks += queueInfo.Completed
-				}
-			}
-		}
+	stats, err := s.store.GetStats(r.Context())
+	if err != nil {
+		_, _ = fmt.Fprintf(w, `<div class="text-red-500">Error: %s</div>`, err.Error())
+		return
 	}
 
 	_ = s.tmpl.ExecuteTemplate(w, "partial_stats.html", stats)

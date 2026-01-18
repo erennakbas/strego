@@ -268,6 +268,11 @@
                              }));
                              
                              showCleanupModal = false;
+                             
+                             // Refresh consumer list after cleanup
+                             setTimeout(() => {
+                                 htmx.trigger('#consumers-content', 'manualRefresh');
+                             }, 100);
                          }
                      ">
                     <button 
@@ -410,9 +415,10 @@
                         </span>
                         <span class="text-sm font-mono text-strego-400">{{.Name}}</span>
                     </div>
-                    <div class="flex items-center gap-4 text-xs">
-                        <div class="flex items-center gap-1.5">
-                            <span class="text-gray-400">Pending in PEL: <span class="text-yellow-400 font-medium">{{.Pending}}</span></span>
+                    <div class="flex items-center gap-4 text-sm flex-shrink-0">
+                        <div class="flex items-center gap-1.5 w-[180px]">
+                            <span class="text-gray-400">Pending in PEL:</span>
+                            <span class="text-yellow-400 font-medium tabular-nums min-w-[4ch] inline-block text-right">{{.Pending}}</span>
                             <div class="relative inline-flex items-center group">
                                 <svg class="w-3.5 h-3.5 text-gray-600 hover:text-gray-400 cursor-help" fill="currentColor" viewBox="0 0 20 20">
                                     <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -424,7 +430,10 @@
                                 </div>
                             </div>
                         </div>
-                        <span class="text-gray-400">Idle Time: <span class="text-gray-300 font-medium">{{.IdleTime}}</span></span>
+                        <div class="flex items-center gap-1.5 w-[120px] justify-end">
+                            <span class="text-gray-400">Idle Time:</span>
+                            <span class="text-gray-300 font-medium tabular-nums">{{.IdleTime}}</span>
+                        </div>
                     </div>
                 </div>
                 {{end}}
